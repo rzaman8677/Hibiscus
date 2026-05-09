@@ -25,5 +25,10 @@ vi.mock('@tauri-apps/api/event', () => ({
     listen: mockListen,
 }))
 
+vi.mock('@tauri-apps/api/path', () => ({
+    isAbsolute: vi.fn((path: string) => Promise.resolve(/^([a-zA-Z]:[\\/]|[/\\])/.test(path))),
+    join: vi.fn((...parts: string[]) => Promise.resolve(parts.join('\\'))),
+}))
+
 // Export mocks for use in tests
 export { mockInvoke, mockListen }
