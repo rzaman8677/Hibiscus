@@ -34,6 +34,55 @@
   font-size: 0.9em;
 }
 
+.knowledge-status-badge {
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.78em;
+  cursor: pointer;
+}
+
+.knowledge-status-badge.state-ready {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+}
+
+.knowledge-status-badge.state-indexing {
+  color: var(--accent-secondary);
+}
+
+.knowledge-status-badge.state-errors,
+.knowledge-status-badge.state-needs-rebuild {
+  color: var(--danger, #f7768e);
+}
+
+.knowledge-dashboard {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--divider);
+  background: var(--panel-bg);
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 0.85em;
+}
+
+.knowledge-dashboard-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.knowledge-dashboard-actions button {
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
 .search-close {
   background: none;
   border: none;

@@ -256,7 +256,7 @@ function AppInner() {
   /**
    * Open file by path string (for Calendar linked files)
    */
-  const openFileByPath = useCallback((filePath: string) => {
+  const openFileByPath = useCallback((filePath: string, _line?: number) => {
     const name = filePath.split(/[/\\]/).pop() || filePath
     handleFileOpen({
       id: filePath,
