@@ -87,6 +87,7 @@ export const ALL_TOKENS = [
   "--editor-comment",
   "--editor-selection",
   "--editor-line-highlight",
+  "--editor-highlight",
   "--editor-cursor",
 
   // Selection colors
@@ -148,6 +149,7 @@ export const MIDNIGHT_THEME: Theme = {
     "--editor-comment": "#5c6370",
     "--editor-selection": "rgba(122, 162, 247, 0.15)",
     "--editor-line-highlight": "rgba(255, 255, 255, 0.03)",
+    "--editor-highlight": "rgba(122, 162, 247, 0.35)",
     "--editor-cursor": "#8b92a8",
 
     "--selection-bg": "rgba(122, 162, 247, 0.25)",
@@ -203,6 +205,7 @@ export const DAWN_THEME: Theme = {
     "--editor-comment": "#9ca3af",
     "--editor-selection": "rgba(59, 130, 246, 0.2)",
     "--editor-line-highlight": "rgba(0, 0, 0, 0.03)",
+    "--editor-highlight": "rgba(59, 130, 246, 0.35)",
     "--editor-cursor": "#4b5563",
 
     "--selection-bg": "rgba(59, 130, 246, 0.3)",
@@ -258,6 +261,7 @@ export const FOREST_THEME: Theme = {
     "--editor-comment": "#6ee7b7",
     "--editor-selection": "rgba(52, 211, 153, 0.2)",
     "--editor-line-highlight": "rgba(167, 243, 208, 0.03)",
+    "--editor-highlight": "rgba(52, 211, 153, 0.35)",
     "--editor-cursor": "#a7f3d0",
 
     "--selection-bg": "rgba(52, 211, 153, 0.3)",
