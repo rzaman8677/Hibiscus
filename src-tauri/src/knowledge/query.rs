@@ -36,7 +36,8 @@
 
 use crate::knowledge::storage;
 use crate::knowledge::types::{
-    CachedQuery, RankedSearchResult, SearchResult, TopicMap,
+    BacklinkMap, CachedQuery, KnowledgeError, KnowledgeGraph, KnowledgeStatus,
+    RankedSearchResult, SearchResult, SkippedFile, TopicMap,
 };
 use crate::knowledge::queue::KnowledgeState;
 use std::collections::HashMap;
@@ -58,6 +59,17 @@ const PREFIX_MATCH_BOOST: f64 = 0.2;
 
 /// Score boost for fuzzy match (edit distance 1 from the query term).
 const FUZZY_MATCH_BOOST: f64 = 0.1;
+const PHRASE_MATCH_BOOST: f64 = 1.0;
+
+#[derive(Debug, Clone)]
+struct SearchFilters {
+    topic: Option<String>,
+    tags: Vec<String>,
+    file_types: Vec<String>,
+    folder: Option<String>,
+    heading: Option<String>,
+    mode: Option<String>,
+}
 
 // ===========================================================================
 // Phase 1 commands (unchanged interface, maintained for backward compat)
@@ -147,6 +159,9 @@ fn load_search_results(workspace_root: &str, chunk_ids: &[String]) -> Vec<Search
                 heading: chunk.heading,
                 content: chunk.content,
                 word_count: chunk.word_count,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                tags: chunk.tags,
             })
         })
         .collect()
@@ -184,6 +199,9 @@ pub async fn get_chunk(
                 heading: chunk.heading,
                 content: chunk.content,
                 word_count: chunk.word_count,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                tags: chunk.tags,
             })
             .ok_or_else(|| format!("Chunk not found: {}", chunk_id))
     })
@@ -217,10 +235,33 @@ pub async fn rebuild_knowledge_index(
 
     let ws = workspace_root.clone();
     tokio::task::spawn_blocking(move || {
+        storage::clear_knowledge_store(&ws)
+            .map_err(|e| format!("Failed to clear stale knowledge index: {}", e))?;
         crate::knowledge::queue::initial_scan(&ws)
     })
     .await
     .map_err(|e| format!("Rebuild task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn clear_knowledge_index(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<(), String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    {
+        let mut cache = state.cache.lock().await;
+        cache.invalidate_all();
+    }
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || {
+        storage::clear_knowledge_store(&ws)
+            .map_err(|e| format!("Failed to clear knowledge index: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Clear task failed: {}", e))?
 }
 
 // ===========================================================================
@@ -254,6 +295,12 @@ pub async fn search_chunks(
     query: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    topic: Option<String>,
+    tags: Option<Vec<String>>,
+    file_types: Option<Vec<String>>,
+    folder: Option<String>,
+    heading: Option<String>,
+    mode: Option<String>,
     state: State<'_, Arc<KnowledgeState>>,
 ) -> Result<Vec<RankedSearchResult>, String> {
     let workspace_root = state
@@ -268,9 +315,17 @@ pub async fn search_chunks(
 
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(20).min(100); // Cap at 100
+    let filters = SearchFilters {
+        topic,
+        tags: tags.unwrap_or_default(),
+        file_types: file_types.unwrap_or_default(),
+        folder,
+        heading,
+        mode,
+    };
 
     // Phase 2: check in-memory query cache first.
-    let cache_key = format!("{}:{}:{}", query_normalized, offset, limit);
+    let cache_key = format!("{}:{}:{}:{:?}", query_normalized, offset, limit, filters);
     {
         let mut cache = state.cache.lock().await;
         if let Some(cached_pairs) = cache.query_cache.get(&cache_key) {
@@ -290,7 +345,7 @@ pub async fn search_chunks(
     let qn = query_normalized.clone();
 
     let (ranked_pairs, results) = tokio::task::spawn_blocking(move || {
-        ranked_search_blocking(&ws, &qn, offset, limit)
+        ranked_search_blocking(&ws, &qn, offset, limit, &filters)
     })
     .await
     .map_err(|e| format!("Ranked search failed: {}", e))?;
@@ -311,12 +366,19 @@ fn ranked_search_blocking(
     query: &str,
     offset: usize,
     limit: usize,
+    filters: &SearchFilters,
 ) -> (Vec<(String, f64)>, Vec<RankedSearchResult>) {
     let scored_index = storage::read_scored_index(workspace_root);
+    let phrases = extract_phrases(query);
+    let topic_lookup = build_topic_lookup(workspace_root);
+    let allowed_topic_chunks = filters.topic.as_ref().and_then(|topic| {
+        storage::read_topics(workspace_root).get(topic).cloned()
+    });
 
     // Split query into individual terms for multi-keyword search.
-    let terms: Vec<&str> = query.split_ascii_whitespace().collect();
-    if terms.is_empty() {
+    let query_without_phrases = strip_phrases(query);
+    let terms: Vec<&str> = query_without_phrases.split_ascii_whitespace().collect();
+    if terms.is_empty() && phrases.is_empty() {
         return (Vec::new(), Vec::new());
     }
 
@@ -366,12 +428,32 @@ fn ranked_search_blocking(
         }
     }
 
+    for phrase in &phrases {
+        for chunk_id in candidate_chunk_ids(workspace_root) {
+            if let Some(chunk) = storage::read_chunk(workspace_root, &chunk_id) {
+                if chunk.content.to_lowercase().contains(phrase) {
+                    *chunk_scores.entry(chunk_id).or_insert(0.0) += PHRASE_MATCH_BOOST;
+                }
+            }
+        }
+    }
+
     if chunk_scores.is_empty() {
         return (Vec::new(), Vec::new());
     }
 
     // Sort by score descending, then by chunk_id for determinism.
-    let mut scored_chunks: Vec<(String, f64)> = chunk_scores.into_iter().collect();
+    let mut scored_chunks: Vec<(String, f64)> = chunk_scores
+        .into_iter()
+        .filter(|(chunk_id, _)| {
+            if let Some(allowed) = &allowed_topic_chunks {
+                if !allowed.contains(chunk_id) {
+                    return false;
+                }
+            }
+            chunk_matches_filters(workspace_root, chunk_id, filters)
+        })
+        .collect();
     scored_chunks.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -386,7 +468,7 @@ fn ranked_search_blocking(
         .collect();
 
     // Load chunk data for the paginated results.
-    let results = load_ranked_results_from_pairs(workspace_root, &paginated);
+    let results = load_ranked_results_from_pairs_with_context(workspace_root, &paginated, &terms, &topic_lookup);
 
     (paginated, results)
 }
@@ -406,9 +488,134 @@ fn load_ranked_results_from_pairs(
                 content: chunk.content,
                 word_count: chunk.word_count,
                 score: *score,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                matched_terms: Vec::new(),
+                tags: chunk.tags,
+                topic: None,
             })
         })
         .collect()
+}
+
+fn load_ranked_results_from_pairs_with_context(
+    workspace_root: &str,
+    pairs: &[(String, f64)],
+    terms: &[&str],
+    topic_lookup: &HashMap<String, String>,
+) -> Vec<RankedSearchResult> {
+    pairs
+        .iter()
+        .filter_map(|(chunk_id, score)| {
+            storage::read_chunk(workspace_root, chunk_id).map(|chunk| {
+                let content_lower = chunk.content.to_lowercase();
+                let matched_terms = terms
+                    .iter()
+                    .filter(|term| content_lower.contains(**term))
+                    .map(|term| (*term).to_string())
+                    .collect();
+                RankedSearchResult {
+                    chunk_id: chunk.id.clone(),
+                    file: chunk.file,
+                    heading: chunk.heading,
+                    content: chunk.content,
+                    word_count: chunk.word_count,
+                    score: *score,
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    matched_terms,
+                    tags: chunk.tags,
+                    topic: topic_lookup.get(&chunk.id).cloned(),
+                }
+            })
+        })
+        .collect()
+}
+
+fn extract_phrases(query: &str) -> Vec<String> {
+    let mut phrases = Vec::new();
+    let mut in_quote = false;
+    let mut current = String::new();
+    for ch in query.chars() {
+        if ch == '"' {
+            if in_quote {
+                let phrase = current.trim().to_lowercase();
+                if !phrase.is_empty() {
+                    phrases.push(phrase);
+                }
+                current.clear();
+            }
+            in_quote = !in_quote;
+        } else if in_quote {
+            current.push(ch);
+        }
+    }
+    phrases
+}
+
+fn strip_phrases(query: &str) -> String {
+    let mut out = String::new();
+    let mut in_quote = false;
+    for ch in query.chars() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            out.push(' ');
+        } else if !in_quote {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn candidate_chunk_ids(workspace_root: &str) -> Vec<String> {
+    storage::read_file_map(workspace_root)
+        .values()
+        .flat_map(|ids| ids.clone())
+        .collect()
+}
+
+fn build_topic_lookup(workspace_root: &str) -> HashMap<String, String> {
+    let mut lookup = HashMap::new();
+    for (topic, chunk_ids) in storage::read_topics(workspace_root) {
+        for chunk_id in chunk_ids {
+            lookup.insert(chunk_id, topic.clone());
+        }
+    }
+    lookup
+}
+
+fn chunk_matches_filters(workspace_root: &str, chunk_id: &str, filters: &SearchFilters) -> bool {
+    let Some(chunk) = storage::read_chunk(workspace_root, chunk_id) else {
+        return false;
+    };
+    if let Some(folder) = &filters.folder {
+        if !chunk.file.replace('\\', "/").contains(&folder.replace('\\', "/")) {
+            return false;
+        }
+    }
+    if let Some(heading) = &filters.heading {
+        if !chunk.heading.as_deref().unwrap_or("").to_lowercase().contains(&heading.to_lowercase()) {
+            return false;
+        }
+    }
+    if !filters.file_types.is_empty() {
+        let ext = std::path::Path::new(&chunk.file)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !filters.file_types.iter().any(|ft| ft.trim_start_matches('.').eq_ignore_ascii_case(&ext)) {
+            return false;
+        }
+    }
+    if !filters.tags.is_empty() {
+        let chunk_tags: Vec<String> = chunk.tags.iter().map(|t| t.to_lowercase()).collect();
+        if !filters.tags.iter().all(|tag| chunk_tags.contains(&tag.to_lowercase())) {
+            return false;
+        }
+    }
+    let _reserved_mode = filters.mode.as_deref().unwrap_or("keyword");
+    true
 }
 
 /// Lightweight fuzzy match: returns true if two strings differ by exactly
@@ -496,6 +703,76 @@ pub async fn get_topics(
     .map_err(|e| format!("Get topics task failed: {}", e))?
 }
 
+#[tauri::command]
+pub async fn get_knowledge_status(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<KnowledgeStatus, String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || Ok(storage::read_status(&ws)))
+        .await
+        .map_err(|e| format!("Get status task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_indexing_errors(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<Vec<KnowledgeError>, String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || Ok(storage::read_errors(&ws)))
+        .await
+        .map_err(|e| format!("Get errors task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_skipped_files(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<Vec<SkippedFile>, String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || Ok(storage::read_skipped_files(&ws)))
+        .await
+        .map_err(|e| format!("Get skipped files task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_knowledge_graph(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<KnowledgeGraph, String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || Ok(storage::read_graph(&ws)))
+        .await
+        .map_err(|e| format!("Get graph task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_backlinks(
+    state: State<'_, Arc<KnowledgeState>>,
+) -> Result<BacklinkMap, String> {
+    let workspace_root = state
+        .get_workspace_root()
+        .await
+        .ok_or_else(|| "No workspace root set".to_string())?;
+    let ws = workspace_root.clone();
+    tokio::task::spawn_blocking(move || Ok(storage::read_backlinks(&ws)))
+        .await
+        .map_err(|e| format!("Get backlinks task failed: {}", e))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +799,11 @@ mod tests {
     #[test]
     fn test_fuzzy_match_length_difference() {
         assert!(!is_fuzzy_match("rust", "rustlang")); // length diff > 1
+    }
+
+    #[test]
+    fn test_phrase_extraction_and_stripping() {
+        assert_eq!(extract_phrases(r#"rust "dynamic programming" notes"#), vec!["dynamic programming"]);
+        assert_eq!(strip_phrases(r#"rust "dynamic programming" notes"#).split_whitespace().collect::<Vec<_>>(), vec!["rust", "notes"]);
     }
 }
