@@ -1,7 +1,6 @@
 import { KnowledgeGraphView } from "../../features/knowledge/KnowledgeGraphView"
 import { TabBar } from "../../components/TabBar/TabBar"
 import { EditorView, CursorPosition } from "../../components/Editor/EditorView"
-import { FileNode } from "../../types"
 
 export interface MainPaneProps {
   centerView: "editor" | "graph"
@@ -50,7 +49,7 @@ export function MainPane(props: MainPaneProps) {
           activeFileId={props.activeFileId}
           onSelectTab={props.switchTab}
           onCloseTab={props.closeTab}
-          onDropFile={(node: FileNode) => props.handleFileOpen({
+          onDropFile={(node: { id: string; name: string; path: string; type: string }) => props.handleFileOpen({
             id: node.id,
             name: node.name,
             path: node.path,
