@@ -28,6 +28,7 @@ import { openUrl } from "@tauri-apps/plugin-opener"
 import { WindowControls } from "./WindowControls"
 import { useTheme } from "../../state/ThemeContext"
 import "./TitleBar.css"
+import { Icons } from "../Icons/icons"
 
 /**
  * Menu item definition for dropdown menus
@@ -280,7 +281,13 @@ export function TitleBar({
             <div className="titlebar-left" ref={menuRef}>
                 {/* Logo */}
                 <div className="titlebar-logo">
-                    <span className="titlebar-logo-icon">🌺</span>
+                    {/* <span className="titlebar-logo-icon">🌺</span> */}
+                    <img
+                    src={Icons.hibiscus}
+                    alt="Hibiscus Logo"
+                    width={20}
+                    height={20}
+                    />
                 </div>
 
                 {/* Menu sections */}
