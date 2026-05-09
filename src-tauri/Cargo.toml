@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["fs", "sync", "rt", "rt-multi-thread", "tim
 pdf-extract = "0.10"  # PDF text extraction (Phase 2)
 zip = "2"             # DOCX zip-archive reading (Phase 2)
 quick-xml = "0.37"    # DOCX XML paragraph parsing (Phase 2)
+sha2 = "0.10"         # Stable content hashes for persisted knowledge IDs
 
 [dev-dependencies]
 tempfile = "3"

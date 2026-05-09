@@ -105,9 +105,15 @@ pub fn run() {
             knowledge::search_knowledge,
             knowledge::get_chunk,
             knowledge::rebuild_knowledge_index,
+            knowledge::clear_knowledge_index,
             // Knowledge indexing system (Phase 2)
             knowledge::search_chunks,
             knowledge::get_topics,
+            knowledge::get_knowledge_status,
+            knowledge::get_indexing_errors,
+            knowledge::get_skipped_files,
+            knowledge::get_knowledge_graph,
+            knowledge::get_backlinks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hibiscus");

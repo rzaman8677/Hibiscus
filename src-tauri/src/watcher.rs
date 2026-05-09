@@ -24,7 +24,7 @@
 
 use crate::knowledge::types::{FileEvent, FileEventType};
 use crate::knowledge::queue::KnowledgeState;
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{event::{ModifyKind, RenameMode}, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
@@ -82,6 +82,16 @@ const IGNORED_PATHS: &[&str] = &[
 fn should_ignore_path(path: &PathBuf) -> bool {
     let path_str = path.to_string_lossy();
     IGNORED_PATHS.iter().any(|pattern| path_str.contains(pattern))
+}
+
+fn classify_event_kind(kind: &EventKind) -> FileEventType {
+    match kind {
+        EventKind::Create(_) => FileEventType::Create,
+        EventKind::Remove(_) => FileEventType::Delete,
+        EventKind::Modify(ModifyKind::Name(RenameMode::From | RenameMode::To | RenameMode::Both | RenameMode::Any | RenameMode::Other)) => FileEventType::Rename,
+        EventKind::Modify(_) => FileEventType::Modify,
+        _ => FileEventType::Modify,
+    }
 }
 
 /// Starts watching a workspace directory for filesystem changes.
@@ -177,7 +187,7 @@ pub fn watch_workspace(
         println!("[Hibiscus] File watcher started successfully");
 
         // Accumulator for debouncing events
-        let mut accumulated_paths = std::collections::HashSet::new();
+        let mut accumulated_paths = std::collections::HashMap::<String, FileEventType>::new();
         let mut last_event_time = Option::<Instant>::None;
 
         // Main event loop
@@ -202,9 +212,10 @@ pub fn watch_workspace(
                         EventKind::Access(_) | EventKind::Other => continue,
                         _ => {}
                     }
+                    let knowledge_event_type = classify_event_kind(&event.kind);
                     for path in event.paths {
                         if !should_ignore_path(&path) {
-                            accumulated_paths.insert(path.to_string_lossy().to_string());
+                            accumulated_paths.insert(path.to_string_lossy().to_string(), knowledge_event_type.clone());
                         }
                     }
                     if !accumulated_paths.is_empty() {
@@ -219,7 +230,8 @@ pub fn watch_workspace(
                     if !accumulated_paths.is_empty() {
                         if let Some(time) = last_event_time {
                             if time.elapsed() >= Duration::from_millis(DEBOUNCE_MS) {
-                                let paths: Vec<String> = accumulated_paths.drain().collect();
+                                let events: Vec<(String, FileEventType)> = accumulated_paths.drain().collect();
+                                let paths: Vec<String> = events.iter().map(|(p, _)| p.clone()).collect();
                                 if let Err(e) = window.emit("fs-changed", &paths) {
                                     eprintln!("[Hibiscus] Error emitting event: {}", e);
                                 }
@@ -229,10 +241,10 @@ pub fn watch_workspace(
                                 // The knowledge pipeline handles this correctly: it
                                 // uses hash-based change detection regardless of
                                 // event type for Create/Modify.
-                                for p in &paths {
+                                for (p, event_type) in events {
                                     let _ = knowledge_tx.send(FileEvent {
-                                        path: p.clone(),
-                                        event_type: FileEventType::Modify,
+                                        path: p,
+                                        event_type,
                                     });
                                 }
                                 last_event_time = None;
