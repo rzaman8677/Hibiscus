@@ -170,7 +170,13 @@ function AppInner() {
   // KNOWLEDGE INDEX
   // Tracks [[links]], #tags, and backlinks across workspace notes
   // ============================================================================
-  const { index: knowledgeIndex, updateNote } = useKnowledgeIndex(
+  const {
+    index: knowledgeIndex,
+    updateNote,
+    // Available for wiring to tree mutation events (file delete / rename)
+    deleteNote: _deleteNote,
+    renameNote: _renameNote,
+  } = useKnowledgeIndex(
     workspace.tree,
     buffersRef
   )
@@ -250,7 +256,7 @@ function AppInner() {
   /**
    * Open file by path string (for Calendar linked files)
    */
-  const openFileByPath = useCallback((filePath: string) => {
+  const openFileByPath = useCallback((filePath: string, _line?: number) => {
     const name = filePath.split(/[/\\]/).pop() || filePath
     handleFileOpen({
       id: filePath,

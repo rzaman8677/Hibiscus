@@ -88,3 +88,17 @@ The frontend interacts with the knowledge system via robust Tauri commands (`sea
 
 **Caching**:
 A custom in-memory LRU cache stores recent query results and retrieved chunks. This guarantees instant responses while typing. The cache implements an all-or-nothing invalidation strategy, seamlessly flushing stale results anytime a source file changes.
+
+
+## Robustness Upgrade Notes
+
+The knowledge store now treats the backend index as the source of truth for both search and graph metadata. Chunk records include stable SHA-256-derived IDs, location metadata for line-aware navigation, tags, wiki-links, and aliases. Derived graph/backlink snapshots are persisted under `.hibiscus/knowledge/metadata/`.
+
+Additional operational files are written alongside the index:
+
+- `status.json`: current index health, schema version, counts, and progress basics.
+- `errors.json`: recent indexing errors.
+- `skipped_files.json`: files skipped due to size or exclusion rules.
+- `.hibiscusignore`: optional workspace-level exclusion file with simple path-pattern matching.
+
+Search remains local-first keyword retrieval for now. The query interface reserves `mode: "hybrid"` for future semantic/vector retrieval, but no remote or embedding dependency is used in this phase.

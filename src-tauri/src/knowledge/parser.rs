@@ -88,6 +88,7 @@ impl Parser for MarkdownParser {
                         sections.push(Section {
                             heading: current_heading.take(),
                             content: trimmed,
+                            ..Default::default()
                         });
                     }
                     current_heading = Some(rest.trim().to_string());
@@ -109,6 +110,7 @@ impl Parser for MarkdownParser {
             sections.push(Section {
                 heading: current_heading,
                 content: trimmed,
+                ..Default::default()
             });
         }
 
@@ -117,6 +119,7 @@ impl Parser for MarkdownParser {
             sections.push(Section {
                 heading: None,
                 content: String::new(),
+                ..Default::default()
             });
         }
 
@@ -161,6 +164,7 @@ impl Parser for TxtParser {
                     sections.push(Section {
                         heading: None,
                         content: trimmed,
+                        ..Default::default()
                     });
                     current_paragraph.clear();
                 }
@@ -178,6 +182,7 @@ impl Parser for TxtParser {
             sections.push(Section {
                 heading: None,
                 content: trimmed,
+                ..Default::default()
             });
         }
 
@@ -185,6 +190,7 @@ impl Parser for TxtParser {
             sections.push(Section {
                 heading: None,
                 content: String::new(),
+                ..Default::default()
             });
         }
 
@@ -234,6 +240,7 @@ impl Parser for PdfParser {
                 sections.push(Section {
                     heading: None,
                     content: trimmed,
+                    ..Default::default()
                 });
             }
         }
@@ -242,6 +249,7 @@ impl Parser for PdfParser {
             sections.push(Section {
                 heading: None,
                 content: String::new(),
+                ..Default::default()
             });
         }
 
@@ -332,6 +340,7 @@ impl Parser for DocxParser {
                             sections.push(Section {
                                 heading: None,
                                 content: trimmed,
+                                ..Default::default()
                             });
                         }
                     }
@@ -351,6 +360,7 @@ impl Parser for DocxParser {
             sections.push(Section {
                 heading: None,
                 content: String::new(),
+                ..Default::default()
             });
         }
 

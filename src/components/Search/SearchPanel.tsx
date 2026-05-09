@@ -8,10 +8,27 @@ import "./search.css"
 interface SearchResult {
   chunk_id: string
   file: string
-  heading: string
+  heading?: string
   content: string
   word_count: number
   score: number
+  start_line?: number
+  end_line?: number
+  matched_terms?: string[]
+  tags?: string[]
+  topic?: string
+}
+
+interface KnowledgeStatus {
+  state: string
+  indexed_files: number
+  chunk_count: number
+  schema_version: number
+  last_indexed: string
+  last_rebuild: string
+  error_count: number
+  skipped_count: number
+  needs_rebuild: boolean
 }
 
 interface TopicMap {
@@ -33,6 +50,8 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
   const [loading, setLoading] = useState(false)
   const [resultCount, setResultCount] = useState(0)
   const [hasSearched, setHasSearched] = useState(false)
+  const [status, setStatus] = useState<KnowledgeStatus | null>(null)
+  const [showDashboard, setShowDashboard] = useState(false)
 
   // Debounced search
   const debouncedSearch = useCallback(
@@ -49,7 +68,13 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
         const searchResults = await invoke<SearchResult[]>("search_chunks", {
           query: searchQuery,
           offset: 0,
-          limit: 20
+          limit: 20,
+          topic: selectedTopic,
+          tags: [],
+          fileTypes: [],
+          folder: null,
+          heading: null,
+          mode: "keyword"
         })
         setResults(searchResults)
         setResultCount(searchResults.length)
@@ -61,8 +86,18 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
         setLoading(false)
       }
     },
-    [workspaceRoot]
+    [workspaceRoot, selectedTopic]
   )
+
+  const loadStatus = useCallback(async () => {
+    if (!workspaceRoot) return
+    try {
+      const statusData = await invoke<KnowledgeStatus>("get_knowledge_status")
+      setStatus(statusData)
+    } catch (error) {
+      console.error("Failed to load knowledge status:", error)
+    }
+  }, [workspaceRoot])
 
   // Load topics
   const loadTopics = useCallback(async () => {
@@ -75,13 +110,29 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
     }
   }, [workspaceRoot])
 
+
+  const rebuildIndex = useCallback(async () => {
+    await invoke("rebuild_knowledge_index")
+    await loadStatus()
+    await loadTopics()
+    if (query.trim()) debouncedSearch(query)
+  }, [debouncedSearch, loadStatus, loadTopics, query])
+
+  const clearIndex = useCallback(async () => {
+    await invoke("clear_knowledge_index")
+    setResults([])
+    await loadStatus()
+    await loadTopics()
+  }, [loadStatus, loadTopics])
+
   // Initialize topics on mount and reset search state
   useEffect(() => {
     if (open) {
       loadTopics()
+      loadStatus()
       setHasSearched(false)
     }
-  }, [open, loadTopics])
+  }, [open, loadTopics, loadStatus])
 
   // Handle search with debounce
   useEffect(() => {
@@ -94,8 +145,8 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
 
   const handleTopicSelect = useCallback((topic: string | null) => {
     setSelectedTopic(topic)
-    // Could filter results by topic in future iteration
-  }, [])
+    if (query.trim()) debouncedSearch(query)
+  }, [query, debouncedSearch])
 
   if (!open) return null
 
@@ -104,12 +155,24 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
       <div className="search-header">
         <div className="search-header-left">
           <span>Search Knowledge Base</span>
+          {status && <button className={`knowledge-status-badge state-${status.state.toLowerCase().replace(/\s+/g, "-")}`} onClick={() => setShowDashboard((v) => !v)}>{status.state}{status.skipped_count > 0 ? ` / ${status.skipped_count} skipped` : ""}</button>}
           {loading && <span className="search-loading">(Loading...)</span>}
         </div>
         <button className="search-close" onClick={onClose}>
           ×
         </button>
       </div>
+
+      {showDashboard && status && (
+        <div className="knowledge-dashboard">
+          <div><strong>{status.indexed_files}</strong> files / <strong>{status.chunk_count}</strong> chunks</div>
+          <div>Schema v{status.schema_version} / Errors {status.error_count} / Skipped {status.skipped_count}</div>
+          <div className="knowledge-dashboard-actions">
+            <button onClick={rebuildIndex}>Rebuild</button>
+            <button onClick={clearIndex}>Clear</button>
+          </div>
+        </div>
+      )}
 
       <div className="search-input-row">
         <SearchInput

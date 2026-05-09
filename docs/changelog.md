@@ -4,6 +4,32 @@
 
 All notable changes to the **Hibiscus** project will be documented in this file.
 
+## [v0.12.0] - Knowledge Base Robustness Overhaul
+
+### Major Features
+- **Status Dashboard**: Implemented a comprehensive UI dashboard tracking indexing health, chunk counts, schema versions, errors, and skipped files.
+- **Repair UX**: Added explicit controls to rebuild or clear the knowledge base index directly from the user interface.
+- **Backend Metadata Extraction**: The indexer now automatically parses Markdown files for wiki-links, tags, and YAML frontmatter aliases natively.
+- **Workspace Exclusions**: Added support for `.hibiscusignore` to explicitly prevent specific directories and files from being indexed.
+
+### Search & Query Upgrades
+- **Phrase Parsing**: Implemented strict exact-phrase matching and dynamic boosting via quoted search queries.
+- **Topic Filtering**: Allowed intersection-based topic filtering directly inside the TF-IDF query engine.
+- **Line Navigation**: Search results now include precise `start_line` and `end_line` metadata, allowing the editor to auto-scroll directly to the extracted chunk.
+
+### Architecture Improvements
+- **Storage Hardening**: Migrated to `sha2` (SHA-256) for deterministic, cross-platform file content hashing.
+- **Large File Bypassing**: Added an implicit 10MB file ceiling constraint to the indexer queue to strictly prevent application out-of-memory errors.
+- **Mutex Write Locks**: Synchronized background indexing state writes within `KnowledgeState` using lock semantics to prevent data races.
+- **Schema Tracking**: Incremented metadata formats to schema version 2 to manage extended location properties and graph resolution files gracefully.
+
+## [v0.11.3] - Icon System Overhaul
+
+- Added theme-aware icon wrapper system (`withThemeVariant`)
+- Refactored icon architecture for composability
+- Fixed binary file handling (`read_binary_file`)
+- Bumped version across configs
+
 ## [v0.11.1] - Editor Stability & Graph System
 
 ### Major Features

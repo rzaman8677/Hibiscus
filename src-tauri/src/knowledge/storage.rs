@@ -26,8 +26,10 @@
 //!   can always be rebuilt from source files.
 //! ============================================================================
 
-use crate::knowledge::types::{CachedQuery, Chunk, FileMap, KeywordIndex, Manifest,
-                               ScoredKeywordIndex, TopicMap};
+use crate::knowledge::types::{
+    BacklinkMap, CachedQuery, Chunk, FileMap, KnowledgeError, KnowledgeGraph, KnowledgeStatus,
+    Manifest, NoteIndex, ScoredKeywordIndex, SkippedFile, TopicMap, KeywordIndex,
+};
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -49,6 +51,7 @@ pub fn ensure_dirs(workspace_root: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join("index"))?;
     std::fs::create_dir_all(root.join("files"))?;
     std::fs::create_dir_all(root.join("chunks"))?;
+    std::fs::create_dir_all(root.join("metadata"))?;
     Ok(())
 }
 
@@ -78,6 +81,30 @@ fn chunk_path(workspace_root: &str, chunk_id: &str) -> PathBuf {
 
 fn recent_queries_path(workspace_root: &str) -> PathBuf {
     knowledge_root(workspace_root).join("recent_queries.json")
+}
+
+fn note_index_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("metadata").join("note_index.json")
+}
+
+fn backlinks_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("metadata").join("backlinks.json")
+}
+
+fn graph_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("metadata").join("graph.json")
+}
+
+fn status_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("status.json")
+}
+
+fn errors_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("errors.json")
+}
+
+fn skipped_files_path(workspace_root: &str) -> PathBuf {
+    knowledge_root(workspace_root).join("skipped_files.json")
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +166,54 @@ pub fn read_topics(workspace_root: &str) -> TopicMap {
 /// Write the topic map to disk.
 pub fn write_topics(workspace_root: &str, topics: &TopicMap) -> std::io::Result<()> {
     write_json(&topics_path(workspace_root), topics)
+}
+
+pub fn read_note_index(workspace_root: &str) -> NoteIndex {
+    read_json_or_default(&note_index_path(workspace_root))
+}
+
+pub fn write_note_index(workspace_root: &str, note_index: &NoteIndex) -> std::io::Result<()> {
+    write_json(&note_index_path(workspace_root), note_index)
+}
+
+pub fn read_backlinks(workspace_root: &str) -> BacklinkMap {
+    read_json_or_default(&backlinks_path(workspace_root))
+}
+
+pub fn write_backlinks(workspace_root: &str, backlinks: &BacklinkMap) -> std::io::Result<()> {
+    write_json(&backlinks_path(workspace_root), backlinks)
+}
+
+pub fn read_graph(workspace_root: &str) -> KnowledgeGraph {
+    read_json_or_default(&graph_path(workspace_root))
+}
+
+pub fn write_graph(workspace_root: &str, graph: &KnowledgeGraph) -> std::io::Result<()> {
+    write_json(&graph_path(workspace_root), graph)
+}
+
+pub fn read_status(workspace_root: &str) -> KnowledgeStatus {
+    read_json_or_default(&status_path(workspace_root))
+}
+
+pub fn write_status(workspace_root: &str, status: &KnowledgeStatus) -> std::io::Result<()> {
+    write_json(&status_path(workspace_root), status)
+}
+
+pub fn read_errors(workspace_root: &str) -> Vec<KnowledgeError> {
+    read_json_or_default(&errors_path(workspace_root))
+}
+
+pub fn write_errors(workspace_root: &str, errors: &[KnowledgeError]) -> std::io::Result<()> {
+    write_json(&errors_path(workspace_root), errors)
+}
+
+pub fn read_skipped_files(workspace_root: &str) -> Vec<SkippedFile> {
+    read_json_or_default(&skipped_files_path(workspace_root))
+}
+
+pub fn write_skipped_files(workspace_root: &str, skipped: &[SkippedFile]) -> std::io::Result<()> {
+    write_json(&skipped_files_path(workspace_root), skipped)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,9 +303,8 @@ pub fn write_recent_queries(
 ///
 /// Returns `None` if the file cannot be read.
 pub fn hash_file(path: &str) -> Option<String> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
     use std::io::Read;
+    use sha2::{Digest, Sha256};
 
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -238,18 +312,18 @@ pub fn hash_file(path: &str) -> Option<String> {
     };
 
     let mut reader = BufReader::new(file);
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = Sha256::new();
     let mut buf = [0u8; 8192];
 
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => hasher.write(&buf[..n]),
+            Ok(n) => hasher.update(&buf[..n]),
             Err(_) => return None,
         }
     }
 
-    Some(format!("{:016x}", hasher.finish()))
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 // ---------------------------------------------------------------------------
@@ -328,14 +402,25 @@ fn read_json_or_default<T: serde::de::DeserializeOwned + Default>(path: &Path) -
 /// Uses `serde_json::to_writer_pretty` for human-readable output.
 /// The pretty format adds negligible overhead for files this small
 /// and makes debugging vastly easier.
-fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+fn write_json<T: serde::Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
     // Ensure parent directory exists (idempotent).
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = std::fs::File::create(path)?;
+    let tmp_path = path.with_extension("json.tmp");
+    let file = std::fs::File::create(&tmp_path)?;
     let writer = BufWriter::new(file);
     serde_json::to_writer_pretty(writer, value)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    std::fs::rename(tmp_path, path)?;
+    Ok(())
+}
+
+pub fn clear_knowledge_store(workspace_root: &str) -> std::io::Result<()> {
+    let root = knowledge_root(workspace_root);
+    if root.exists() {
+        std::fs::remove_dir_all(&root)?;
+    }
+    ensure_dirs(workspace_root)
 }
 

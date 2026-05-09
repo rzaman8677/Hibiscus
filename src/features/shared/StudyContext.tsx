@@ -72,7 +72,7 @@ export interface StudyContextType {
 // CONTEXT
 // =============================================================================
 
-const StudyContext = createContext<StudyContextType | null>(null)
+export const StudyContext = createContext<StudyContextType | null>(null)
 
 // =============================================================================
 // PROVIDER

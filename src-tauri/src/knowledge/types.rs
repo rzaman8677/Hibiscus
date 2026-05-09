@@ -29,6 +29,7 @@ pub enum FileEventType {
     Create,
     Modify,
     Delete,
+    Rename,
 }
 
 /// A single filesystem event destined for the processing queue.
@@ -46,12 +47,16 @@ pub struct FileEvent {
 /// A logical section extracted from a source file.
 /// For Markdown, this corresponds to a heading + its body.
 /// For plain text, this corresponds to a paragraph block.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Section {
     /// The heading text, if one was found (e.g., "## Introduction" -> "Introduction").
     pub heading: Option<String>,
     /// The body content of this section.
     pub content: String,
+    pub start_line: Option<usize>,
+    pub end_line: Option<usize>,
+    pub start_byte: Option<usize>,
+    pub end_byte: Option<usize>,
 }
 
 /// The result of parsing a single file.
@@ -74,7 +79,7 @@ pub struct ParsedDocument {
 /// PERFORMANCE NOTE: The `id` field is computed as `sha256(file_path + content)`
 /// truncated to 16 hex characters. This is NOT cryptographic -- it is purely
 /// a content-addressable key for deduplication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Chunk {
     /// Deterministic content-addressable ID: hash(file_path + content).
     pub id: String,
@@ -88,6 +93,20 @@ pub struct Chunk {
     pub word_count: usize,
     /// SHA-256 hex digest of `content` alone, used for change detection.
     pub hash: String,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub start_byte: Option<usize>,
+    #[serde(default)]
+    pub end_byte: Option<usize>,
+    #[serde(default)]
+    pub links: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +142,8 @@ pub type KeywordIndex = HashMap<String, Vec<String>>;
 /// with schema version, last-full-rebuild timestamp, statistics, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default = "current_schema_version")]
+    pub schema_version: u32,
     /// Schema version for forward-compatibility checks.
     pub version: u32,
     /// Total number of indexed files.
@@ -131,17 +152,34 @@ pub struct Manifest {
     pub chunk_count: usize,
     /// ISO-8601 timestamp of the last indexing run.
     pub last_indexed: String,
+    #[serde(default)]
+    pub last_rebuild: String,
+    #[serde(default)]
+    pub index_state: String,
+    #[serde(default)]
+    pub last_error_count: usize,
+    #[serde(default)]
+    pub skipped_count: usize,
 }
 
 impl Default for Manifest {
     fn default() -> Self {
         Self {
+            schema_version: current_schema_version(),
             version: 1,
             file_count: 0,
             chunk_count: 0,
             last_indexed: String::new(),
+            last_rebuild: String::new(),
+            index_state: "Ready".to_string(),
+            last_error_count: 0,
+            skipped_count: 0,
         }
     }
+}
+
+pub fn current_schema_version() -> u32 {
+    2
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +194,12 @@ pub struct SearchResult {
     pub heading: Option<String>,
     pub content: String,
     pub word_count: usize,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Cached query result for the lightweight recent-queries cache.
@@ -245,6 +289,16 @@ pub struct RankedSearchResult {
     /// Composite relevance score. Higher is better.
     /// Incorporates TF-IDF score, exact match boost, and prefix match boost.
     pub score: f64,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub matched_terms: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub topic: Option<String>,
 }
 
 /// Query parameters for the Phase 2 search_chunks command.
@@ -259,6 +313,18 @@ pub struct SearchQuery {
     /// Maximum number of results to return. Defaults to 20.
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub topic: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub file_types: Vec<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub heading: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -276,3 +342,104 @@ pub const MAX_CHUNKS_PER_KEYWORD: usize = 200;
 /// File size threshold for deferred parsing (10 MB).
 /// Files larger than this are logged and skipped to prevent memory spikes.
 pub const LARGE_FILE_THRESHOLD: u64 = 10 * 1024 * 1024;
+
+
+// ===========================================================================
+// Phase 3 metadata/status types
+// ===========================================================================
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NoteMetadata {
+    pub path: String,
+    pub name: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub links: Vec<String>,
+    #[serde(default)]
+    pub resolved_links: Vec<String>,
+    #[serde(default)]
+    pub backlinks: Vec<String>,
+    #[serde(default)]
+    pub broken_links: Vec<String>,
+    #[serde(default)]
+    pub orphan: bool,
+}
+
+pub type NoteIndex = HashMap<String, NoteMetadata>;
+pub type BacklinkMap = HashMap<String, Vec<String>>;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KnowledgeGraphNode {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub degree: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KnowledgeGraphEdge {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct KnowledgeGraph {
+    pub nodes: Vec<KnowledgeGraphNode>,
+    pub edges: Vec<KnowledgeGraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeStatus {
+    pub state: String,
+    pub indexed_files: usize,
+    pub chunk_count: usize,
+    pub schema_version: u32,
+    pub last_indexed: String,
+    pub last_rebuild: String,
+    pub pending_count: usize,
+    pub active_count: usize,
+    pub last_processed_file: Option<String>,
+    pub error_count: usize,
+    pub skipped_count: usize,
+    pub needs_rebuild: bool,
+}
+
+impl Default for KnowledgeStatus {
+    fn default() -> Self {
+        Self {
+            state: "Ready".to_string(),
+            indexed_files: 0,
+            chunk_count: 0,
+            schema_version: current_schema_version(),
+            last_indexed: String::new(),
+            last_rebuild: String::new(),
+            pending_count: 0,
+            active_count: 0,
+            last_processed_file: None,
+            error_count: 0,
+            skipped_count: 0,
+            needs_rebuild: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeError {
+    pub file: Option<String>,
+    pub message: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedFile {
+    pub file: String,
+    pub reason: String,
+    pub timestamp: String,
+}

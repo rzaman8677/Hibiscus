@@ -1,10 +1,15 @@
 interface SearchResult {
   chunk_id: string
   file: string
-  heading: string
+  heading?: string
   content: string
   word_count: number
   score: number
+  start_line?: number
+  end_line?: number
+  matched_terms?: string[]
+  tags?: string[]
+  topic?: string
 }
 
 interface ResultItemProps {
@@ -22,30 +27,10 @@ export function ResultItem({ result, onOpenFile, onNavigate, isSelected }: Resul
     ? result.content.substring(0, 150) + "..."
     : result.content
 
-  // Extract line number from chunk_id if available (format: "file:line" or similar)
-  const extractLineNumber = (chunkId: string): number | undefined => {
-    // Try different patterns for line number extraction
-    const patterns = [
-      /:(\d+)$/,           // "file:123"
-      /#(\d+)$/,           // "file#123" 
-      /@(\d+)$/,           // "file@123"
-      /_(\d+)$/,           // "file_123"
-    ];
-    
-    for (const pattern of patterns) {
-      const match = chunkId.match(pattern);
-      if (match) {
-        return parseInt(match[1], 10);
-      }
-    }
-    
-    return undefined;
-  };
-
   const handleClick = () => {
     console.log('ResultItem clicked:', { file: normalizedFile, chunkId: result.chunk_id });
     if (onOpenFile) {
-      const lineNumber = extractLineNumber(result.chunk_id);
+      const lineNumber = result.start_line;
       console.log('Calling onOpenFile with:', { file: normalizedFile, lineNumber });
       onOpenFile(normalizedFile, lineNumber);
     } else {
@@ -86,6 +71,8 @@ export function ResultItem({ result, onOpenFile, onNavigate, isSelected }: Resul
       
       <div className="search-item-meta">
         <span className="search-item-words">{result.word_count} words</span>
+        {result.start_line && <span className="search-item-words">Line {result.start_line}</span>}
+        {result.topic && <span className="search-item-words">{result.topic}</span>}
       </div>
     </div>
   )

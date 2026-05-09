@@ -246,6 +246,7 @@ mod tests {
             content: "Rust programming language is fast".into(),
             word_count: 5,
             hash: "abc".into(),
+            ..Default::default()
         };
         add_chunks_to_index(&mut index, &[chunk]);
         assert!(index.get("rust").unwrap().contains(&"c1".to_string()));
@@ -269,6 +270,7 @@ mod tests {
             content: "Rust programming language".into(),
             word_count: 3,
             hash: "h1".into(),
+            ..Default::default()
         };
         let chunk2 = Chunk {
             id: "c2".into(),
@@ -277,6 +279,7 @@ mod tests {
             content: "Rust systems programming".into(),
             word_count: 3,
             hash: "h2".into(),
+            ..Default::default()
         };
         add_chunks_to_index(&mut index, &[chunk1, chunk2]);
         let scored = rebuild_scored_index(&index, 2);
