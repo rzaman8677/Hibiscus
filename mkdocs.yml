@@ -33,23 +33,38 @@ theme:
 
 nav:
   - Welcome: index.md
+
   - Guide:
+    - Workspace & Editing:
       - Getting Started: guide/getting-started.md
       - Application Flow: guide/flow.md
+      - Workbench: guide/workbench.md
+      - Editor: guide/editor.md
+      - File Tree: guide/file-tree.md
       - Multi-File Editor: guide/multi-file-editor.md
+      - Status Bar: guide/status-bar.md
       - Search System: guide/search.md
+    - Knowledge System:
+      - Knowledge Dashboard: guide/knowledge-dashboard.md
+      - Metadata & Linking: guide/metadata-and-linking.md
       - Knowledge Graph: guide/knowledge-graph.md
       - Modal System: guide/modal-system.md
+    - Tools and Productivity:
+      - Calender: guide/calendar.md
       - Keyboard Shortcuts: guide/shortcuts.md
       - Theming: guide/theming.md
+      - Custom Themes: guide/theme-editor.md
       - Study Tools: guide/study-tools.md
+
   - Developer:
       - Architecture: dev/architecture.md
+      - Dev Hooks: dev/hooks.md
       - Knowledge Pipeline: dev/knowledge-pipeline.md
       - Knowledge Graph Architecture: dev/knowledge-graph-architecture.md
       - Icon System: dev/icon-system.md
       - API Reference: dev/api-reference.md
       - Contributing: dev/contributing.md
+
   - Changelog: changelog.md
 
 markdown_extensions:

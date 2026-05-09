@@ -50,6 +50,8 @@ Ready to dive in? Head over to the [Getting Started Guide](guide/getting-started
 - **[Calendar & Daily Planner](guide/calendar.md)** - Scheduling, events, and task management
 - **[Study Tools](guide/study-tools.md)** - Pomodoro, flashcards, notes synthesis, statistics
 - **[Search System](guide/search.md)** - Finding content across your workspace
+- **[Knowledge Dashboard](guide/knowledge-dashboard.md)** - Tracking index health and repair
+- **[Metadata & Linking](guide/metadata-and-linking.md)** - Tags, aliases, and backlinks
 - **[Knowledge Graph](guide/knowledge-graph.md)** - Visualizing note connections
 - **[Modal System](guide/modal-system.md)** - File creation dialogs
 
