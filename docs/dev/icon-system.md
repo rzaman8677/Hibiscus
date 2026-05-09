@@ -8,6 +8,18 @@ The icon system provides a centralized, type-safe way to manage and use icons th
 
 ## Architecture Components
 
+### Native Application Icons (OS-Level)
+
+To change the native application icon (the one that appears on the Taskbar, Alt+Tab menu, macOS dock, and executable file), you must update the core Tauri assets.
+
+1. **Location**: Place your new icon file (preferably a high-resolution `app-icon.png` or `app-icon.svg` at least 1024x1024) in the root of `src-tauri/`.
+2. **Generation**: Run the Tauri icon generator using the CLI:
+   ```bash
+   npm run tauri icon src-tauri/app-icon.png
+   ```
+   This command automatically generates all the required `.ico`, `.icns`, and resized `.png` files inside the `src-tauri/icons/` directory.
+3. **Version Control**: **Yes**, you should commit and push all generated `.ico`, `.icns`, and `.png` files inside `src-tauri/icons/` to GitHub so that CI/CD pipelines use your custom icon during the build process.
+
 ### 1. Icon Definition Structure
 
 Icons are defined in a centralized structure with type safety:
