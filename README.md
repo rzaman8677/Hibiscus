@@ -1,10 +1,40 @@
-# Hibiscus 🌺
+<p align="center">
+  <img src="docs/assets/logo/128x128.png" width="128" alt="Hibiscus Logo" />
+</p>
 
-**Hibiscus** is a specialized workspace and code editor designed for **students and academic developers**.
+<h1 align="center">Hibiscus</h1>
 
-It bridges the gap between a lightweight code editor and a dedicated study planner, allowing you to manage your coursework, coding projects, and exam schedules in a single, distraction-free environment. By integrating file management with time management, Hibiscus reduces context switching and keeps your focus where it belongs.
+---
 
-![Hibiscus UI](public/Hibiscus%20v0.3.7.png)
+<p align="center">
+  Bridges the gap between a lightweight code editor and a dedicated study planner, allowing you to manage your coursework, coding projects, and exam schedules in a single, distraction-free environment; reducing context switching and keeping your focus where it belongs
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" />
+  <img src="https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri" />
+  <img src="https://img.shields.io/badge/Rust-000000?logo=rust" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript" />
+  <img src="https://img.shields.io/badge/License-MPL--2.0-blue" />
+</p>
+
+<p align="center">
+  <a href="https://andyferns.github.io/Hibiscus/">Documentation</a>
+  ·
+  <a href="https://github.com/AndyFerns/Hibiscus/issues">Issues</a>
+  ·
+  <a href="https://github.com/AndyFerns/Hibiscus">Source</a>
+</p>
+
+---
+
+## Why Hibiscus?
+
+Hibiscus combines the flexibility of a lightweight IDE with the structure of a dedicated academic workspace. Instead of juggling note-taking apps, planners, and editors separately, Hibiscus provides a unified local-first environment optimized for focused study and note-making workflows.
+
+<p align="center">
+  <img src="public/Hibiscus%20v0.3.7.png" alt="Hibiscus UI" />
+</p>
 
 ## ✨ Features
 
