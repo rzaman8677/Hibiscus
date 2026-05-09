@@ -2,7 +2,7 @@ use hibiscus_lib::knowledge::{queue, storage};
 use tempfile::TempDir;
 use std::fs;
 use std::path::PathBuf;
-use hibiscus_lib::knowledge::types::FileEventType;
+// use hibiscus_lib::knowledge::types::FileEventType;
 
 fn setup_workspace() -> (TempDir, String) {
     let temp_dir = TempDir::new().unwrap();

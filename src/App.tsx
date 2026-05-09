@@ -61,7 +61,13 @@ import "./App.css"
 // Knowledge system
 import { useKnowledgeIndex } from "./features/knowledge/useKnowledgeIndex"
 import { buildGraph } from "./features/knowledge/buildGraph"
-import { KnowledgeGraphView } from "./features/knowledge/KnowledgeGraphView"
+
+// Layout Panes
+import { TopPane } from "./layout/panes/TopPane"
+import { LeftPane } from "./layout/panes/LeftPane"
+import { MainPane } from "./layout/panes/MainPane"
+import { RightPane } from "./layout/panes/RightPane"
+import { BottomPane } from "./layout/panes/BottomPane"
 
 /**
  * Inner app component that has access to StudyContext.
@@ -84,8 +90,6 @@ function AppInner() {
   // Markdown preview toggle state
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(true)
 
-  
-  
   // ============================================================================
   // WORKSPACE STATE
   // Tree structure, root path, and navigation
@@ -407,27 +411,23 @@ function AppInner() {
   return (
     <>
       <Workbench
-        /* ----------------------------------------------------------------
-         * TITLE BAR (Custom Window Titlebar)
-         * Application header with menus and window controls
-         * ---------------------------------------------------------------- */
         top={
-          <TitleBar
+          <TopPane
             workspaceRoot={workspaceRoot}
-            onOpenFolder={changeWorkspace}
+            onChangeWorkspace={changeWorkspace}
             onToggleLeftPanel={toggleLeftPanel}
             onToggleRightPanel={toggleRightPanel}
             showLeftPanel={showLeftPanel}
             showRightPanel={showRightPanel}
-            onSave={saveCurrentFile}
+            onSaveCurrentFile={saveCurrentFile}
             onSaveAs={handleSaveAs}
-            onSaveAll={saveAllFiles}
+            onSaveAllFiles={saveAllFiles}
             onCloseFile={handleCloseFile}
             onOpenFile={handleOpenFile}
             onNewFile={handleNewFile}
             onNewFolder={handleNewFolder}
             onCloseFolder={handleCloseFolder}
-            onExit={handleAppExit}
+            onAppExit={handleAppExit}
             onOpenStudyTool={openStudyTool}
             onToggleFocusMode={toggleFocusMode}
             focusMode={focusMode}
@@ -441,17 +441,17 @@ function AppInner() {
          * Hidden during focus mode when setting is enabled.
          * ---------------------------------------------------------------- */
         left={
-          showLeftPanel && !(focusMode && settings.general.focusModeHidesExplorer) ? (
-            <TreeView
-              tree={workspace.tree}
-              activeNodeId={workspace.session?.active_node}
-              onOpen={handleFileOpen}
-              onNewFile={handleNewFile}
-              onNewFolder={handleNewFolder}
-              onMoveNode={moveNode}
-              onToggleGraph={toggleGraphView}
-            />
-          ) : null
+          <LeftPane
+            visible={showLeftPanel}
+            hiddenByFocusMode={!!(focusMode && settings.general.focusModeHidesExplorer)}
+            tree={workspace.tree}
+            activeNodeId={workspace.session?.active_node}
+            onOpen={handleFileOpen}
+            onNewFile={handleNewFile}
+            onNewFolder={handleNewFolder}
+            onMoveNode={moveNode}
+            onToggleGraph={toggleGraphView}
+          />
         }
 
         /* ----------------------------------------------------------------
@@ -459,77 +459,28 @@ function AppInner() {
          * Monaco editor when a file is selected, placeholder otherwise
          * ---------------------------------------------------------------- */
         main={
-          <>
-            {/* Knowledge Graph — hidden when editor is active.
-                Only mount after the user has toggled to graph at least once. */}
-            {centerView === "graph" && (
-              <KnowledgeGraphView
-                graph={knowledgeGraph}
-                activeFilePath={activeFilePath}
-                onNodeClick={handleGraphNodeClick}
-                onBack={() => setCenterView("editor")}
-              />
-            )}
-
-            {/* Editor view — hidden (not unmounted) when graph is active.
-                Using display:none preserves the Monaco editor instance,
-                preventing content loss and blank editor bugs. */}
-            <div
-              className="editor-wrapper"
-              style={{ display: centerView === "editor" ? undefined : "none" }}
-            >
-              {/* Tab bar -- visible only when at least one file is open */}
-              <TabBar
-                openFiles={openFiles}
-                activeFileId={activeFileId}
-                onSelectTab={switchTab}
-                onCloseTab={closeTab}
-                onDropFile={(node) => handleFileOpen({
-                  id: node.id,
-                  name: node.name,
-                  path: node.path,
-                  type: (node.type === "file" || node.type === "folder") ? node.type : "file",
-                })}
-              />
-
-              {activeFile && activeFilePath ? (
-                <>
-                  {/* Monaco editor container */}
-                  <div className="editor-container">
-                    <EditorView
-                      path={activeFilePath}
-                      content={fileContent}
-                      version={fileVersion}
-                      onChange={handleEditorChange}
-                      onCursorChange={setCursorPosition}
-                      onSave={saveCurrentFile}
-                      showMarkdownPreview={showMarkdownPreview}
-                    />
-                  </div>
-                </>
-              ) : (
-                /* Placeholder when no file is selected */
-                <div className="editor-placeholder">
-                  <span className="editor-placeholder-icon">
-                    <svg width="48" height="48" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                      <path d="M14 12.5C14 13.0523 13.5523 13.5 13 13.5H3C2.44772 13.5 2 13.0523 2 12.5V3.5C2 2.94772 2.44772 2.5 3 2.5H6L7.5 4.5H13C13.5523 4.5 14 4.94772 14 5.5V12.5Z" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </span>
-                  <span className="editor-placeholder-text">
-                    Select a file from the tree to start editing
-                  </span>
-                </div>
-              )}
-            </div>
-          </>
+          <MainPane
+            centerView={centerView}
+            setCenterView={setCenterView}
+            knowledgeGraph={knowledgeGraph}
+            activeFile={activeFile}
+            activeFilePath={activeFilePath}
+            activeFileId={activeFileId}
+            fileContent={fileContent}
+            fileVersion={fileVersion}
+            openFiles={openFiles}
+            showMarkdownPreview={showMarkdownPreview}
+            handleGraphNodeClick={handleGraphNodeClick}
+            switchTab={switchTab}
+            closeTab={closeTab}
+            handleFileOpen={handleFileOpen}
+            handleEditorChange={handleEditorChange}
+            setCursorPosition={setCursorPosition}
+            saveCurrentFile={saveCurrentFile}
+          />
         }
-
-        /* ----------------------------------------------------------------
-         * RIGHT PANEL - Calendar & Study Tools
-         * Tabbed view with Calendar, Pomodoro, Flashcards, Notes, Stats
-         * ---------------------------------------------------------------- */
         right={
-          <RightPanelContainer
+          <RightPane
             workspaceRoot={workspaceRoot}
             onOpenFile={openFileByPath}
             pomodoroState={pomodoroState}
@@ -549,74 +500,20 @@ function AppInner() {
          * Displays status info, cursor position, and layout controls
          * ---------------------------------------------------------------- */
         bottom={
-          <div className="status-bar">
-            {/* Left: Workspace info + Focus mode indicator */}
-            <div className="status-bar-left">
-              {workspaceRoot ? (
-                <span className="status-item">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                    <path d="M14 12.5C14 13.0523 13.5523 13.5 13 13.5H3C2.44772 13.5 2 13.0523 2 12.5V3.5C2 2.94772 2.44772 2.5 3 2.5H6L7.5 4.5H13C13.5523 4.5 14 4.94772 14 5.5V12.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  {workspaceRoot.split(/[/\\]/).pop()}
-                </span>
-              ) : (
-                <span className="status-item status-item--muted">
-                  No workspace
-                </span>
-              )}
-              {focusMode && (
-                <span className="status-item status-item--accent" title="Focus Mode active">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                    <path d="M7 12.5C10.0376 12.5 12.5 10.0376 12.5 7C12.5 3.96243 10.0376 1.5 7 1.5C3.96243 1.5 1.5 3.96243 1.5 7C1.5 10.0376 3.96243 12.5 7 12.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M11 11L14.5 14.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  Focus
-                </span>
-              )}
-            </div>
-
-            {/* Right: Pomodoro timer, Theme, Layout, Version */}
-            <div className="status-bar-right">
-              {/* Cursor Position (Line:Column) */}
-              {activeFile && (
-                <span className="status-item" title="Cursor position">
-                  Ln {cursorPosition.line}, Col {cursorPosition.column}
-                </span>
-              )}
-
-              {/* Current file name */}
-              {activeFile && (
-                <span className="status-item status-item--muted">
-                  {activeFile.name}
-                </span>
-              )}
-
-              {/* Pomodoro mini timer (visible when running) */}
-              <PomodoroTimer
-                state={pomodoroState}
-                onClick={() => openStudyTool("pomodoro")}
-              />
-
-              {/* Theme Selector */}
-              <ThemeSelector />
-
-              {/* Separator */}
-              <span className="status-separator" />
-
-              {/* Layout Toggle */}
-              <LayoutToggle
-                showLeftPanel={showLeftPanel}
-                showRightPanel={showRightPanel}
-                onToggleLeftPanel={toggleLeftPanel}
-                onToggleRightPanel={toggleRightPanel}
-              />
-
-              {/* Version */}
-              <span className="status-item status-item--muted">
-                {APP_NAME} v{APP_VERSION}
-              </span>
-            </div>
-          </div>
+          <BottomPane
+            workspaceRoot={workspaceRoot}
+            focusMode={focusMode}
+            activeFile={activeFile}
+            cursorPosition={cursorPosition}
+            pomodoroState={pomodoroState}
+            showLeftPanel={showLeftPanel}
+            showRightPanel={showRightPanel}
+            appName={APP_NAME}
+            appVersion={APP_VERSION}
+            openStudyTool={openStudyTool}
+            toggleLeftPanel={toggleLeftPanel}
+            toggleRightPanel={toggleRightPanel}
+          />
         }
       />
       <ShortcutOverlay
