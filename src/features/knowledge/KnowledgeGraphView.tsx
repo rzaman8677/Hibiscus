@@ -198,11 +198,11 @@ export function KnowledgeGraphView({
   // Determine node state based on current interaction context
   const getNodeState = useCallback(
     (nodeId: string): NodeState => {
-      if (clickedNodeId === nodeId) return "active"
+      if ((clickedNodeId || activeFilePath) === nodeId) return "active"
       if (hoveredNodeId === nodeId) return "hovered"
 
       // Check if this node is a neighbor of hovered or clicked node
-      const focusId = clickedNodeId || hoveredNodeId
+      const focusId = clickedNodeId || hoveredNodeId || activeFilePath
       if (focusId) {
         const neighbors = adjacencyMap.get(focusId)
         if (neighbors?.has(nodeId)) return "neighbor"
@@ -222,7 +222,7 @@ export function KnowledgeGraphView({
 
       return "default"
     },
-    [clickedNodeId, hoveredNodeId, adjacencyMap, focusMode]
+    [clickedNodeId, hoveredNodeId, activeFilePath, adjacencyMap, focusMode]
   )
 
   // Check if a link should be highlighted
@@ -658,7 +658,7 @@ export function KnowledgeGraphView({
             </button>
           )}
           <span className="graph-view-stats">
-            {graph.nodes.length} notes / {graph.edges.length} links
+            {graph.nodes.length} notes / {graph.edges.length} links / {globalScale.toFixed(1)}x
           </span>
         </div>
       </div>

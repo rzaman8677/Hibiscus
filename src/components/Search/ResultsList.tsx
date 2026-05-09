@@ -4,10 +4,15 @@ import { ResultItem } from "./ResultItem"
 interface SearchResult {
   chunk_id: string
   file: string
-  heading: string
+  heading?: string
   content: string
   word_count: number
   score: number
+  start_line?: number
+  end_line?: number
+  matched_terms?: string[]
+  tags?: string[]
+  topic?: string
 }
 
 interface ResultsListProps {
@@ -45,11 +50,7 @@ export function ResultsList({ results, hasSearched, onOpenFile }: ResultsListPro
     // Auto-open the selected file
     const selectedResult = results[newIndex]
     if (selectedResult && onOpenFile) {
-      const extractLineNumber = (chunkId: string): number | undefined => {
-        const match = chunkId.match(/:(\d+)$/);
-        return match ? parseInt(match[1], 10) : undefined;
-      };
-      const lineNumber = extractLineNumber(selectedResult.chunk_id);
+      const lineNumber = selectedResult.start_line;
       onOpenFile(selectedResult.file, lineNumber);
     }
   }
