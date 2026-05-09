@@ -80,9 +80,9 @@ describe('RightPanelContainer Knowledge Features', () => {
     await waitFor(() => {
       // The panel shows the count in the header
       expect(screen.getByText('2')).toBeInTheDocument();
-      // The filenames should be visible
-      expect(screen.getByText('source1.md')).toBeInTheDocument();
-      expect(screen.getByText('source2.md')).toBeInTheDocument();
+      // The filenames should be visible without extensions
+      expect(screen.getByText('source1')).toBeInTheDocument();
+      expect(screen.getByText('source2')).toBeInTheDocument();
     });
   });
 });

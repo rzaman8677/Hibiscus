@@ -36,10 +36,11 @@ describe('SearchPanel', () => {
 
     // Click badge to toggle dashboard
     fireEvent.click(badge);
-    
     // Verify dashboard content
-    const dashboardStats = await screen.findByText(/5.*files.*15.*chunks/i);
-    expect(dashboardStats).toBeInTheDocument();
+    const filesStat = await screen.findByText('5');
+    const chunksStat = await screen.findByText('15');
+    expect(filesStat).toBeInTheDocument();
+    expect(chunksStat).toBeInTheDocument();
   });
 
   it('filters by topic', async () => {
@@ -69,9 +70,10 @@ describe('SearchPanel', () => {
     render(<SearchPanel open={true} onClose={vi.fn()} workspaceRoot="/mock/root" />);
 
     // Select the topic
-    const topicSelect = await screen.findByRole('combobox');
-    fireEvent.change(topicSelect, { target: { value: 'React' } });
-
+    const topicSelect = await screen.findByText('All Topics');
+    fireEvent.click(topicSelect);
+    const reactTopic = await screen.findByText('React');
+    fireEvent.click(reactTopic);
     // Perform search
     const searchInput = screen.getByPlaceholderText('Search your knowledge base...');
     fireEvent.change(searchInput, { target: { value: 'library' } });
