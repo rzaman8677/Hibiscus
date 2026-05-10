@@ -448,3 +448,91 @@
   --selection-bg: rgba(52, 211, 153, 0.3);
   --selection-text: #ffffff;
 }
+
+[data-theme="petals"] {
+  --bg: #120b0d;
+  --bg-elevated: #1a1013;
+  --panel-bg: #221417;
+  --panel-bg-hover: #2b1b1f;
+  --editor-bg: #120b0d;
+
+  --border: rgba(255, 214, 220, 0.08);
+  --border-hover: rgba(255, 214, 220, 0.16);
+  --border-focus: rgba(255, 122, 146, 0.45);
+  --divider: rgba(255, 214, 220, 0.05);
+
+  --text: #f7e9ec;
+  --text-muted: #d8aeb7;
+  --text-subtle: #9b6f78;
+  --text-disabled: #5f4349;
+
+  --accent: #ff6f91;
+  --accent-hover: #ff85a2;
+  --accent-soft: rgba(255, 111, 145, 0.15);
+  --accent-glow: rgba(255, 111, 145, 0.25);
+
+  --accent-secondary: #ffb3c1;
+  --accent-secondary-soft: rgba(255, 179, 193, 0.15);
+
+  --success: #7dd3a0;
+  --success-soft: rgba(125, 211, 160, 0.15);
+
+  --warning: #f6c177;
+  --warning-soft: rgba(246, 193, 119, 0.15);
+
+  --error: #ff7a90;
+  --error-soft: rgba(255, 122, 144, 0.15);
+
+  --info: #89b4fa;
+  --info-soft: rgba(137, 180, 250, 0.15);
+
+  /* -----------------------------------------------------------------------
+   * EDITOR TOKENS — Petals
+   * ----------------------------------------------------------------------- */
+
+  --editor-fg: #f7e9ec;
+  --editor-muted: #d8aeb7;
+
+  --editor-keyword: #ff7a90;
+  --editor-string: #a6e3a1;
+  --editor-comment: #8b5e66;
+
+  --editor-selection: rgba(255, 111, 145, 0.18);
+  --editor-line-highlight: rgba(255, 255, 255, 0.025);
+  --editor-highlight: rgba(255, 111, 145, 0.35);
+
+  --editor-cursor: #f7c6d0;
+
+  /* -----------------------------------------------------------------------
+   * TEXT HIGHLIGHTING TOKENS — Petals
+   * ----------------------------------------------------------------------- */
+
+  --editor-number: #f6c177;
+  --editor-constant: #f6c177;
+
+  --editor-function: #ffb3c1;
+
+  --editor-variable: #f7e9ec;
+  --editor-parameter: #89dceb;
+
+  --editor-type: #f5a9b8;
+  --editor-class: #f5a9b8;
+  --editor-interface: #f5a9b8;
+
+  --editor-operator: #ff7a90;
+  --editor-punctuation: #f7e9ec;
+
+  --editor-tag: #ff7a90;
+  --editor-attribute: #89dceb;
+  --editor-support: #89dceb;
+
+  --editor-invalid: #ff5f6d;
+  --editor-warning: #f6c177;
+
+  /* -----------------------------------------------------------------------
+   * SELECTION COLORS — Petals
+   * ----------------------------------------------------------------------- */
+
+  --selection-bg: rgba(255, 111, 145, 0.28);
+  --selection-text: #ffffff;
+}

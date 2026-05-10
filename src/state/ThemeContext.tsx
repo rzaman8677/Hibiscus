@@ -102,10 +102,8 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
   // ===========================================================================
 
   const loadUserThemes = useCallback(async () => {
-    if (!workspaceRoot) return
-
     try {
-      const themeJsons = await invoke<string[]>("load_themes", { root: workspaceRoot })
+      const themeJsons = await invoke<string[]>("load_themes")
       const loaded: Theme[] = []
 
       for (const json of themeJsons) {
@@ -124,7 +122,7 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
     }
   }, [workspaceRoot])
 
-  // Load themes when workspace root changes
+  // Load themes on mount
   useEffect(() => {
     loadUserThemes()
   }, [loadUserThemes])
@@ -172,18 +170,15 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
     const merged = mergeWithDefaults(userTheme)
 
     // Persist to backend
-    if (workspaceRoot) {
-      try {
-        const json = serializeTheme(merged)
-        await invoke("save_theme", {
-          root: workspaceRoot,
-          name: merged.name,
-          themeJson: json,
-        })
-      } catch (err) {
-        console.error("[Hibiscus] Failed to save theme to disk:", err)
-        throw err
-      }
+    try {
+      const json = serializeTheme(merged)
+      await invoke("save_theme", {
+        name: merged.name,
+        themeJson: json,
+      })
+    } catch (err) {
+      console.error("[Hibiscus] Failed to save theme to disk:", err)
+      throw err
     }
 
     // Update local state
@@ -196,7 +191,7 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
     if (activeThemeName === merged.name) {
       safeApplyTheme(merged)
     }
-  }, [workspaceRoot, activeThemeName])
+  }, [activeThemeName])
 
   /**
    * Delete a user theme. Preset themes cannot be deleted.
@@ -211,12 +206,10 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
     }
 
     // Remove from backend
-    if (workspaceRoot) {
-      try {
-        await invoke("delete_theme", { root: workspaceRoot, name })
-      } catch (err) {
-        console.error("[Hibiscus] Failed to delete theme from disk:", err)
-      }
+    try {
+      await invoke("delete_theme", { name })
+    } catch (err) {
+      console.error("[Hibiscus] Failed to delete theme from disk:", err)
     }
 
     // Remove from local state
@@ -226,7 +219,7 @@ export function ThemeProvider({ children, workspaceRoot = null }: ThemeProviderP
     if (activeThemeName === name) {
       setActiveThemeName(DEFAULT_THEME.name)
     }
-  }, [workspaceRoot, activeThemeName])
+  }, [activeThemeName])
 
   /**
    * Duplicate an existing theme (preset or user) with a new name.
