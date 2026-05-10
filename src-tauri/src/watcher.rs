@@ -24,7 +24,7 @@
 
 use crate::knowledge::types::{FileEvent, FileEventType};
 use crate::knowledge::queue::KnowledgeState;
-use notify::{event::{ModifyKind, RenameMode}, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{event::{ModifyKind, RenameMode}, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
@@ -263,64 +263,6 @@ pub fn watch_workspace(
         println!("[Hibiscus] File watcher stopped for: {}", watch_path);
         drop(watcher);
     });
-}
-
-/// Processes a filesystem event and emits notifications as needed.
-///
-/// # Arguments
-/// * `event` - The filesystem event to process
-/// * `window` - Tauri window for emitting events
-/// * `last_emit` - Timestamp of last emission for debouncing
-///
-/// # Returns
-/// * `Ok(())` - Event processed successfully
-/// * `Err(String)` - Error during processing
-fn process_event(
-    event: &Event,
-    window: &tauri::Window,
-    last_emit: &mut Instant,
-) -> Result<(), String> {
-    // Filter out access events (we only care about modifications)
-    match event.kind {
-        EventKind::Access(_) => return Ok(()),
-        EventKind::Other => return Ok(()), // Platform-specific noise
-        _ => {}
-    }
-
-    // Check if all paths should be ignored
-    let relevant_paths: Vec<&PathBuf> = event
-        .paths
-        .iter()
-        .filter(|p| !should_ignore_path(p))
-        .collect();
-
-    if relevant_paths.is_empty() {
-        // All paths were ignored
-        return Ok(());
-    }
-
-    // Apply debouncing
-    let debounce_duration = Duration::from_millis(DEBOUNCE_MS);
-    if last_emit.elapsed() < debounce_duration {
-        // Too soon since last emit, skip
-        return Ok(());
-    }
-
-    // Update last emit time
-    *last_emit = Instant::now();
-
-    // Convert paths to strings for the frontend
-    let path_strings: Vec<String> = relevant_paths
-        .iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect();
-
-    // Emit the event to the frontend
-    window
-        .emit("fs-changed", &path_strings)
-        .map_err(|e| format!("Failed to emit event: {}", e))?;
-
-    Ok(())
 }
 
 /// Stops the current file watcher.
