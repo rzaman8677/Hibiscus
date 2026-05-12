@@ -10,6 +10,8 @@ site_dir: site
 
 theme:
   name: material
+  logo: assets/logo/128x128.png
+  favicon: assets/logo/128x128.png
   use_directory_urls: true
   features:
     - navigation.tabs

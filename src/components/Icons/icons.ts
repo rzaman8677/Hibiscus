@@ -1,3 +1,7 @@
+// import Hibiscus from "../../assets/hibiscus-logo-final.svg?react"
+import Hibiscus from "../../assets/128x128.png"
+// TODO fix cursed hibiscus original SVG and replace paths over here 
+
 import {
   File,
   Folder,
@@ -38,6 +42,8 @@ import {
 } from "griddy-icons";
 
 export const Icons = {
+  hibiscus: Hibiscus,
+
   // File system
   file: File,
   folder: Folder,

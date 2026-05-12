@@ -47,6 +47,25 @@ function stripHash(color: string): string {
 }
 
 /**
+ * Convert rgba(r, g, b, a) to #RRGGBBAA hex format required by Monaco colors.
+ * If already hex, return as is.
+ */
+function rgbaToHex(color: string): string {
+  if (!color) return "#00000000";
+  if (color.startsWith("#")) return color;
+  const match = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
+  if (!match) return color; // Fallback
+  const r = parseInt(match[1]).toString(16).padStart(2, "0");
+  const g = parseInt(match[2]).toString(16).padStart(2, "0");
+  const b = parseInt(match[3]).toString(16).padStart(2, "0");
+  let a = "FF";
+  if (match[4]) {
+    a = Math.round(parseFloat(match[4]) * 255).toString(16).padStart(2, "0");
+  }
+  return `#${r}${g}${b}${a}`;
+}
+
+/**
  * Determine whether the current theme is light or dark by checking
  * the perceived luminance of --editor-bg. Returns "vs" for light themes
  * and "vs-dark" for dark themes.
@@ -92,6 +111,7 @@ export function applyEditorThemeFromCSS(): void {
   const selection = getCSSVar("--selection-bg") || getCSSVar("--editor-selection") || getCSSVar("--accent-soft") || "rgba(122,162,247,0.25)"
   const cursor = getCSSVar("--editor-cursor") || getCSSVar("--editor-muted") || "#8b92a8"
   const lineHighlight = getCSSVar("--editor-line-highlight") || "rgba(255,255,255,0.03)"
+  const highlight = getCSSVar("--editor-highlight") || "rgba(122,162,247,0.35)"
   const muted = getCSSVar("--editor-muted") || getCSSVar("--text-muted") || "#8b92a8"
   const selectionText = getCSSVar("--selection-text") || "#ffffff"
 
@@ -164,13 +184,16 @@ export function applyEditorThemeFromCSS(): void {
       { token: "warning", foreground: stripHash(getCSSVar("--editor-warning") || getCSSVar("--warning") || "#e0af68") },
     ],
     colors: {
-      "editor.background": editorBg,
-      "editor.foreground": editorFg,
-      "editorCursor.foreground": cursor,
-      "editor.selectionBackground": selection,
-      "editor.selectionForeground": selectionText,
-      "editor.lineHighlightBackground": lineHighlight,
-      "editorLineNumber.foreground": muted,
+      "editor.background": rgbaToHex(editorBg),
+      "editor.foreground": rgbaToHex(editorFg),
+      "editorCursor.foreground": rgbaToHex(cursor),
+      "editor.selectionBackground": rgbaToHex(selection),
+      "editor.selectionForeground": rgbaToHex(selectionText),
+      "editor.lineHighlightBackground": rgbaToHex(lineHighlight),
+      "editorLineNumber.foreground": rgbaToHex(muted),
+      "editor.selectionHighlightBackground": rgbaToHex(highlight),
+      "editor.wordHighlightBackground": rgbaToHex(highlight),
+      "editor.findMatchHighlightBackground": rgbaToHex(highlight),
     },
   }
 
