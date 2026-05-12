@@ -11,7 +11,7 @@
 // - Uses the same error handling patterns as workspace.rs
 // ============================================================================
 
-use std::path::PathBuf;
+// use std::path::PathBuf;
 use tokio::fs;
 
 use tauri::Manager;
