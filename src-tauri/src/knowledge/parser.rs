@@ -226,6 +226,21 @@ impl Parser for PdfParser {
     }
 
     fn parse(&self, path: &str) -> Result<ParsedDocument, ParseError> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| ParseError::IoError(format!("{}: {}", path, e)))?;
+
+        // Handle empty files without crashing the PDF extractor
+        if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
+            return Ok(ParsedDocument {
+                file_path: path.to_string(),
+                sections: vec![Section {
+                    heading: None,
+                    content: String::new(),
+                    ..Default::default()
+                }],
+            });
+        }
+
         let text = pdf_extract::extract_text(path)
             .map_err(|e| ParseError::IoError(format!("{}: PDF extraction failed: {}", path, e)))?;
 
@@ -290,7 +305,22 @@ impl Parser for DocxParser {
         let file = std::fs::File::open(path)
             .map_err(|e| ParseError::IoError(format!("{}: {}", path, e)))?;
 
-        let mut archive = zip::ZipArchive::new(BufReader::new(file))
+        // Handle empty files without crashing the ZIP parser
+        if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
+            return Ok(ParsedDocument {
+                file_path: path.to_string(),
+                sections: vec![Section {
+                    heading: None,
+                    content: String::new(),
+                    ..Default::default()
+                }],
+            });
+        }
+
+        // Pass raw File instead of BufReader to ZipArchive.
+        // ZipArchive requires random access (Seek), and BufReader dumps its buffer
+        // on every Seek, leading to poor performance and unnecessary allocations.
+        let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| ParseError::IoError(format!("{}: not a valid ZIP/DOCX: {}", path, e)))?;
 
         let doc_xml = archive
