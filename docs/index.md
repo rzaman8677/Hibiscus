@@ -2,7 +2,7 @@
 
 Hibiscus is a highly opinionated, lightning-fast, and elegant local-first study workspace. Built with [React](https://react.dev/), [Tauri](https://tauri.app/), and [Rust](https://www.rust-lang.org/), it seamlessly merges a powerful code editor with deep productivity tools.
 
-![Hibiscus Screen Shot](./assets/Hibiscus%20Screenshot.png)
+![Hibiscus Screen Shot](./assets/Hibiscus%20Main%20Screen%20updated.png)
 
 ## Overview
 

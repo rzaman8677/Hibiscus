@@ -33,7 +33,7 @@
 Hibiscus combines the flexibility of a lightweight IDE with the structure of a dedicated academic workspace. Instead of juggling note-taking apps, planners, and editors separately, Hibiscus provides a unified local-first environment optimized for focused study and note-making workflows.
 
 <p align="center">
-  <img src="public/Hibiscus%20v0.3.7.png" alt="Hibiscus UI" />
+  <img src="./docs/assets/Hibiscus Main Screen updated.png" alt="Hibiscus UI" />
 </p>
 
 ## ✨ Features
