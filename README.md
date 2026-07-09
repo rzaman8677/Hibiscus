@@ -57,6 +57,10 @@ Hibiscus combines the flexibility of a lightweight IDE with the structure of a d
   - Keyboard shortcuts (Ctrl+N for new file, Ctrl+Shift+N for new folder).
   - Customizable layout to fir user needs
 
+<p align="center">
+  <img src="./docs/assets/Hibiscus Graph and Editor.png" alt="Hibiscus Features" />
+</p>
+
 ## Tech Stack
 
 ### Frontend
@@ -134,24 +138,7 @@ Start the app in development mode with hot-reloading:
 npm run tauri dev
 ```
 
-   This command starts the Vite dev server and the Tauri wrapper application simultaneously with hot-reload enabled.
-
-## Contributing
-
-As a sole dev working on this project; and being highly passionate about it; I happily welcome contributions! Please follow these steps:
-
-1. **Fork** the repository.
-2. **Clone** your fork locally.
-3. Create a **Feature Branch** (`git checkout -b feature/AmazingFeature`).
-4. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-5. Push to the branch (`git push origin feature/AmazingFeature`).
-6. Open a **Pull Request**.
-
-### Guidelines
-
-- **Code Style**: formatting is handled by Prettier (Frontend) and `cargo fmt` (Backend).
-- **Correctness**: Ensure no regressions in existing features (File tree, Save logic).
-- **Persistence**: If adding new data features, follow the pattern in `src-tauri/src/commands.rs` for safe atomic writes.
+This command starts the Vite dev server and the Tauri wrapper application simultaneously with hot-reload enabled.
 
 ## License
 
