@@ -254,11 +254,11 @@ pub fn spawn_knowledge_worker(state: Arc<KnowledgeState>) {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
                             eprintln!("[Knowledge] Processing error: {}", e);
-                            state_for_task.record_error(None, e).await;
+                            state_for_task.record_error(Some(path_for_status.clone()), e).await;
                         }
                         Err(e) => {
                             eprintln!("[Knowledge] Task panic: {}", e);
-                            state_for_task.record_error(None, format!("Task panic: {}", e)).await;
+                            state_for_task.record_error(Some(path_for_status.clone()), format!("Task panic: {}", e)).await;
                         }
                     }
                     let workspace = state_for_task.get_workspace_root().await;
@@ -353,9 +353,9 @@ fn process_file_event(
             let doc = match parser.parse(file_path) {
                 Ok(d) => d,
                 Err(e) => {
-                    // Log and skip on parse failure -- do not propagate.
                     eprintln!("[Knowledge] Parse failed for {}: {}", file_path, e);
-                    return Ok(());
+                    // Propagate the error so it gets recorded in the UI status
+                    return Err(format!("Parse failed: {}", e));
                 }
             };
 
@@ -485,6 +485,11 @@ fn should_ignore_for_knowledge(workspace_root: &str, file_path: &str) -> bool {
     let normalized = file_path.replace('\\', "/").to_lowercase();
     let built_in = ["/.hibiscus/", "/.git/", "/node_modules/", "/.vscode/", "/__pycache__/"];
     if built_in.iter().any(|pat| normalized.contains(pat)) {
+        return true;
+    }
+
+    let file_name = std::path::Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if file_name.starts_with("~$") || file_name.starts_with(".~") {
         return true;
     }
 
