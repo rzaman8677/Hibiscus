@@ -80,9 +80,6 @@ function AppInner() {
     mode: "file"
   })
 
-  // Markdown preview toggle state
-  const [showMarkdownPreview, setShowMarkdownPreview] = useState(true)
-
   // ============================================================================
   // WORKSPACE STATE
   // Tree structure, root path, and navigation
@@ -122,6 +119,35 @@ function AppInner() {
     // Buffer ref (for knowledge index)
     buffersRef,
   } = useEditorController(workspaceRoot)
+
+  // ============================================================================
+  // MARKDOWN VIEW MODE (per-file)
+  // Each .md file remembers its own mode: "live-preview" or "source".
+  // Non-markdown files are unaffected.
+  // NOTE: Must be declared AFTER useEditorController which defines activeFilePath.
+  // ============================================================================
+  const [markdownViewModes, setMarkdownViewModes] = useState<Record<string, "live-preview" | "source">>({})
+
+  /**
+   * Derive the current markdown view mode for the active file.
+   * Defaults to "live-preview" for .md files that haven't been toggled yet.
+   */
+  const activeMarkdownViewMode: "live-preview" | "source" =
+    activeFilePath && activeFilePath.toLowerCase().endsWith(".md")
+      ? (markdownViewModes[activeFilePath] ?? "live-preview")
+      : "source" // non-md files are always "source" (plain Monaco)
+
+  /**
+   * Toggle the markdown view mode for the currently active file.
+   * Only operates on .md files; silently ignored otherwise.
+   */
+  const toggleMarkdownViewMode = useCallback(() => {
+    if (!activeFilePath || !activeFilePath.toLowerCase().endsWith(".md")) return
+    setMarkdownViewModes((prev) => ({
+      ...prev,
+      [activeFilePath]: (prev[activeFilePath] ?? "live-preview") === "live-preview" ? "source" : "live-preview",
+    }))
+  }, [activeFilePath])
 
   // ============================================================================
   // STUDY TOOLS STATE
@@ -385,7 +411,7 @@ function AppInner() {
       setShowRightPanel(true)
       setRightPanelView("search")
     },
-    onToggleMarkdownPreview: () => setShowMarkdownPreview((prev) => !prev),
+    onToggleMarkdownPreview: toggleMarkdownViewMode,
     onToggleGraphView: toggleGraphView,
   })
 
@@ -462,7 +488,8 @@ function AppInner() {
             fileContent={fileContent}
             fileVersion={fileVersion}
             openFiles={openFiles}
-            showMarkdownPreview={showMarkdownPreview}
+            markdownViewMode={activeMarkdownViewMode}
+            onToggleMarkdownViewMode={toggleMarkdownViewMode}
             handleGraphNodeClick={handleGraphNodeClick}
             switchTab={switchTab}
             closeTab={closeTab}
