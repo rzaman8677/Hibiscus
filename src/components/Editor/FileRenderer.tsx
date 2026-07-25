@@ -6,6 +6,12 @@
  * Renders different file types inside the editor based on file extension.
  * Supports Markdown, PDF, DOCX, and PPTX with Monaco as fallback.
  * 
+ * MARKDOWN RENDERING:
+ * Markdown files are now rendered INLINE within Monaco via the
+ * MarkdownInlineDecorator engine (Obsidian-style live preview).
+ * The old split-pane ReactMarkdown preview has been removed.
+ * Monaco occupies 100% width for .md files.
+ * 
  * This component integrates with the existing data flow using:
  * - buffersRef for file content cache
  * - openFiles for file metadata
@@ -13,8 +19,7 @@
  * ============================================================================
  */
 
-import { useMemo, useState, useEffect } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { useState, useEffect } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import mammoth from 'mammoth'
 import { loadBinaryFile } from '../../utils/fileLoader'
@@ -55,34 +60,17 @@ function getFileType(path: string): 'markdown' | 'pdf' | 'docx' | 'pptx' | 'mona
 
 /**
  * Props for FileRenderer component
+ * 
+ * NOTE: showMarkdownPreview has been replaced by markdownViewMode.
+ * Markdown files are always rendered inline via Monaco + MarkdownInlineDecorator.
+ * The markdownViewMode ("live-preview" | "source") is handled upstream in
+ * EditorView — this component no longer needs to manage the preview pane.
  */
 interface FileRendererProps {
   file: { path: string }
   content: string
   children: React.ReactNode
-  showMarkdownPreview?: boolean
-}
-
-/**
- * Markdown Viewer Component
- * Uses react-markdown with memoization to avoid re-parsing
- */
-function MarkdownViewer({ content }: { content: string }) {
-  const memoizedContent = useMemo(() => {
-    return <ReactMarkdown>{content}</ReactMarkdown>
-  }, [content])
-
-  return (
-    <div style={{ 
-      padding: '20px', 
-      height: '100%', 
-      overflow: 'auto',
-      backgroundColor: 'var(--bg)',
-      color: 'var(--text)'
-    }}>
-      {memoizedContent}
-    </div>
-  )
+  markdownViewMode?: "live-preview" | "source"
 }
 
 /**
@@ -304,9 +292,14 @@ function PptxViewer() {
 
 /**
  * Main FileRenderer Component
- * Implements the renderer switch based on file type
+ * 
+ * KEY CHANGE: Markdown files no longer have a split-pane layout.
+ * The ReactMarkdown preview pane has been removed entirely.
+ * Monaco now occupies 100% of the editor width for .md files,
+ * with inline live preview handled by MarkdownInlineDecorator
+ * (managed in EditorView.tsx).
  */
-export function FileRenderer({ file, content, children, showMarkdownPreview = true }: FileRendererProps) {
+export function FileRenderer({ file, content: _content, children, markdownViewMode: _markdownViewMode = "live-preview" }: FileRendererProps) {
   const fileType = getFileType(file.path)
   
   // Is this an editable text file? (Not a binary/document format)
@@ -319,6 +312,10 @@ export function FileRenderer({ file, content, children, showMarkdownPreview = tr
         Switching between file types (e.g. Markdown -> TS -> PDF) must NEVER unmount
         the `{children}` wrapper, otherwise the Monaco instance is destroyed permanently.
         For non-editable files, we simply hide this wrapper with display: none.
+
+        CHANGE: Markdown files now always get full width — no split pane.
+        The old divider + ReactMarkdown preview has been removed.
+        Inline live preview is handled by MarkdownInlineDecorator in the Monaco layer.
       */}
       <div style={{ 
         display: isEditable ? 'flex' : 'none', 
@@ -327,10 +324,9 @@ export function FileRenderer({ file, content, children, showMarkdownPreview = tr
         overflow: 'hidden',
         flex: 1
       }}>
-        {/* Editor pane — always present */}
+        {/* Editor pane — always full width now (split pane removed) */}
         <div style={{
-          flex: (fileType === 'markdown' && showMarkdownPreview) ? 1 : undefined,
-          width: (fileType === 'markdown' && showMarkdownPreview) ? undefined : '100%',
+          width: '100%',
           minWidth: 0,
           minHeight: 0,
           display: 'flex',
@@ -338,20 +334,6 @@ export function FileRenderer({ file, content, children, showMarkdownPreview = tr
         }}>
           {children} {/* Monaco Editor Container */}
         </div>
-
-        {/* Divider + Markdown Preview — conditionally rendered */}
-        {fileType === 'markdown' && showMarkdownPreview && (
-          <>
-            <div style={{
-              width: 1,
-              flexShrink: 0,
-              background: 'var(--border, rgba(255,255,255,0.06))'
-            }} />
-            <div style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
-              <MarkdownViewer content={content} />
-            </div>
-          </>
-        )}
       </div>
 
       {/* Render non-editable viewers alongside the hidden editor */}

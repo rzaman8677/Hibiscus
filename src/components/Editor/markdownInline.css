@@ -1,0 +1,109 @@
+/* c:\Users\write\Code\Projects\Hibiscus\src\components\Editor\markdownInline.css */
+
+/* Hides syntax markers on inactive lines */
+.md-syntax-hidden {
+  display: inline-block !important;
+  width: 0 !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
+  font-size: 0 !important;
+  vertical-align: middle !important;
+}
+
+/* Heading styles */
+.md-h1 {
+  font-size: 1.8em !important;
+  font-weight: 700 !important;
+  color: var(--accent) !important;
+}
+
+.md-h2 {
+  font-size: 1.5em !important;
+  font-weight: 700 !important;
+  color: var(--accent) !important;
+}
+
+.md-h3 {
+  font-size: 1.3em !important;
+  font-weight: 600 !important;
+  color: var(--accent-secondary) !important;
+}
+
+.md-h4 {
+  font-size: 1.15em !important;
+  font-weight: 600 !important;
+  color: var(--text) !important;
+}
+
+.md-h5 {
+  font-size: 1.05em !important;
+  font-weight: 600 !important;
+  color: var(--text-muted) !important;
+}
+
+.md-h6 {
+  font-size: 1em !important;
+  font-weight: 600 !important;
+  color: var(--text-muted) !important;
+}
+
+/* Inline formatting */
+.md-bold {
+  font-weight: 700 !important;
+  color: var(--text) !important;
+}
+
+.md-italic {
+  font-style: italic !important;
+}
+
+.md-strikethrough {
+  text-decoration: line-through !important;
+  opacity: 0.6 !important;
+}
+
+.md-code-inline {
+  font-family: var(--font-mono) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 3px !important;
+  padding: 0 4px !important;
+}
+
+.md-blockquote {
+  border-left: 3px solid var(--accent) !important;
+  padding-left: 0.75em !important;
+  opacity: 0.85 !important;
+}
+
+.md-link, .md-wikilink {
+  color: var(--accent) !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+}
+
+.md-link:hover, .md-wikilink:hover {
+  text-decoration: underline !important;
+}
+
+.md-task-checked {
+  opacity: 0.5 !important;
+  text-decoration: line-through !important;
+}
+
+.md-hr {
+  border-bottom: 1px solid var(--divider) !important;
+  display: block !important;
+  opacity: 0.5 !important;
+  width: 100% !important;
+}
+
+.md-list-marker {
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

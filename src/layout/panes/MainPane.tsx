@@ -12,7 +12,8 @@ export interface MainPaneProps {
   fileContent: string
   fileVersion: number
   openFiles: any[]
-  showMarkdownPreview: boolean
+  markdownViewMode: "live-preview" | "source"
+  onToggleMarkdownViewMode: () => void
   handleGraphNodeClick: (filePath: string) => void
   switchTab: (id: string) => void
   closeTab: (id: string) => void
@@ -60,7 +61,44 @@ export function MainPane(props: MainPaneProps) {
         {props.activeFile && props.activeFilePath ? (
           <>
             {/* Monaco editor container */}
-            <div className="editor-container">
+            <div className="editor-container" style={{ position: 'relative' }}>
+              {/* Markdown View Mode Toggle Button */}
+              {props.activeFilePath.toLowerCase().endsWith('.md') && (
+                <button
+                  className="md-view-toggle-btn"
+                  onClick={props.onToggleMarkdownViewMode}
+                  title={`Switch to ${props.markdownViewMode === 'live-preview' ? 'Source' : 'Live Preview'} Mode (Ctrl+M)`}
+                  style={{
+                    position: 'absolute',
+                    top: '8px',
+                    right: '16px',
+                    zIndex: 10,
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    color: 'var(--text-secondary)',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  {props.markdownViewMode === 'live-preview' ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
+                      <span>Source</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                      <span>Preview</span>
+                    </>
+                  )}
+                </button>
+              )}
               <EditorView
                 path={props.activeFilePath}
                 content={props.fileContent}
@@ -68,7 +106,7 @@ export function MainPane(props: MainPaneProps) {
                 onChange={props.handleEditorChange}
                 onCursorChange={props.setCursorPosition}
                 onSave={props.saveCurrentFile}
-                showMarkdownPreview={props.showMarkdownPreview}
+                markdownViewMode={props.markdownViewMode}
               />
             </div>
           </>

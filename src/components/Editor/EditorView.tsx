@@ -8,6 +8,7 @@
  * - Content synchronization with parent state
  * - Debounced change callbacks
  * - Proper cleanup on unmount
+ * - Inline Markdown live preview (Obsidian-style) via MarkdownInlineDecorator
  * 
  * IMPORTANT LAYOUT NOTES:
  * - The container uses flex: 1 to fill available space
@@ -24,8 +25,10 @@ import { useEffect, useRef } from "react"
 import { getEditorConfig } from "../Editor/editorConfig"
 import { applyEditorThemeFromCSS } from "../Editor/editorThemeAdapter"
 import { FileRenderer } from "./FileRenderer"
+import { MarkdownInlineDecorator } from "./markdownInlineDecorator"
 
 import "./EditorView.css"
+import "./markdownInline.css"
 
 /**
  * Detect language from file path extension
@@ -108,6 +111,7 @@ export interface CursorPosition {
  * @property content - Current file content
  * @property onChange - Callback fired when content changes
  * @property onCursorChange - Callback fired when cursor position changes
+ * @property markdownViewMode - "live-preview" for inline rendering, "source" for raw markdown
  */
 interface EditorViewProps {
   path: string
@@ -116,7 +120,7 @@ interface EditorViewProps {
   onChange: (value: string) => void
   onCursorChange?: (position: CursorPosition) => void
   onSave?: () => void
-  showMarkdownPreview?: boolean
+  markdownViewMode?: "live-preview" | "source"
 }
 
 export function EditorView({
@@ -126,11 +130,14 @@ export function EditorView({
   onChange,
   onCursorChange,
   onSave,
-  showMarkdownPreview = true,
+  markdownViewMode = "live-preview",
 }: EditorViewProps) {
   // Refs for Monaco editor instance and container DOM element
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+
+  // Ref for the inline Markdown decorator instance
+  const decoratorRef = useRef<MarkdownInlineDecorator | null>(null)
 
   // ===========================================================================
   // CRITICAL FIX: Use refs for ALL callbacks to avoid stale closures
@@ -205,8 +212,10 @@ export function EditorView({
       }
     )
 
-    // Cleanup: dispose editor on unmount
+    // Cleanup: dispose editor and decorator on unmount
     return () => {
+      decoratorRef.current?.dispose()
+      decoratorRef.current = null
       editorRef.current?.dispose()
     }
   }, []) // Empty deps: only run on mount
@@ -238,6 +247,59 @@ export function EditorView({
     }
   }, [path])
 
+  // ===========================================================================
+  // INLINE MARKDOWN DECORATOR — lifecycle management
+  // ===========================================================================
+  // Instantiate/dispose the decorator when:
+  // - The file changes (path) — need to check if new file is .md
+  // - The view mode changes — enable in live-preview, disable in source
+  // ===========================================================================
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+
+    const isMarkdown = path.toLowerCase().endsWith(".md") || path.toLowerCase().endsWith(".markdown")
+    const shouldEnable = isMarkdown && markdownViewMode === "live-preview"
+
+    if (shouldEnable) {
+      // Create decorator if it doesn't exist yet
+      if (!decoratorRef.current) {
+        decoratorRef.current = new MarkdownInlineDecorator(editor, {
+          onNavigateLink: (url: string) => {
+            // For now, open external URLs in browser
+            // Internal file links would need workspace navigation
+            console.log("[Hibiscus] Link navigation:", url)
+          },
+          onNavigateWikiLink: (page: string) => {
+            // WikiLink navigation — would connect to workspace file opening
+            console.log("[Hibiscus] WikiLink navigation:", page)
+          },
+        })
+      }
+      decoratorRef.current.setEnabled(true)
+
+      // Apply markdown-optimised editor options
+      editor.updateOptions({
+        wordWrap: "on",
+        lineNumbers: "off",
+      })
+    } else {
+      // Disable decorator (keeps instance alive for quick re-enable)
+      if (decoratorRef.current) {
+        decoratorRef.current.setEnabled(false)
+      }
+
+      // If switching from live-preview to source on a .md file,
+      // restore source-mode editor options
+      if (isMarkdown && markdownViewMode === "source") {
+        editor.updateOptions({
+          wordWrap: "on",
+          lineNumbers: "off",
+        })
+      }
+    }
+  }, [path, markdownViewMode])
+
   // Always render Monaco with FileRenderer composition
   return (
     <div
@@ -248,7 +310,7 @@ export function EditorView({
         display: 'flex'
       }}
     >
-      <FileRenderer file={{ path }} content={content} showMarkdownPreview={showMarkdownPreview}>
+      <FileRenderer file={{ path }} content={content} markdownViewMode={markdownViewMode}>
         {/* Monaco Editor Container */}
         <div
           ref={containerRef}
