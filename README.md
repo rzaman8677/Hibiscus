@@ -36,7 +36,7 @@ Hibiscus combines the flexibility of a lightweight IDE with the structure of a d
   <img src="./docs/assets/Hibiscus Main Screen updated.png" alt="Hibiscus UI" />
 </p>
 
-## ✨ Features
+## Features
 
 - **High Performance**: Powered by a Rust backend for near-instant startup and low memory usage.
 - **Workspace Management**: Native file explorer with recursive tree view and collapsible folders.
