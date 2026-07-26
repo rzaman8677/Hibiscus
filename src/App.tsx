@@ -24,6 +24,7 @@
  */
 
 import { useState, useCallback, useMemo } from "react"
+import { SplashScreen } from "./components/SplashScreen/SplashScreen"
 import { Workbench } from "./layout/workbench"
 import { CursorPosition } from "./components/Editor/EditorView"
 import { ShortcutOverlay } from "./components/StatusBar/ShortcutOverlay"
@@ -570,11 +571,32 @@ function AppInner() {
 export default function App() {
   const { workspaceRoot } = useWorkspaceController()
 
+  // Cold-start gate — sessionStorage resets on process exit, so this
+  // shows exactly once per OS-level launch, not on hot reloads.
+  const isFirstLoad = !sessionStorage.getItem('hibiscus_launched');
+  if (isFirstLoad) sessionStorage.setItem('hibiscus_launched', '1');
+
+  const [splashVisible, setSplashVisible] = useState(isFirstLoad);
+  const [splashExiting, setSplashExiting] = useState(false);
+
+  const handleSplashDone = useCallback(() => {
+    setSplashExiting(true);
+    setTimeout(() => setSplashVisible(false), 350); // matches CSS transition duration
+  }, []);
+
   return (
-    <ThemeProvider workspaceRoot={workspaceRoot}>
-      <StudyProvider>
-        <AppInner />
-      </StudyProvider>
-    </ThemeProvider>
+    <>
+      {splashVisible && (
+        <SplashScreen
+          onDone={handleSplashDone}
+          exiting={splashExiting}
+        />
+      )}
+      <ThemeProvider workspaceRoot={workspaceRoot}>
+        <StudyProvider>
+          <AppInner />
+        </StudyProvider>
+      </ThemeProvider>
+    </>
   )
 }
