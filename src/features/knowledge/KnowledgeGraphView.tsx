@@ -6,7 +6,7 @@
  * Visually expressive, interactive, cognitively intuitive graph visualization.
  *
  * FEATURES:
- * - Force-directed layout via react-force-graph (ForceGraph2D)
+ * - Force-directed layout via react-force-graph-2d (ForceGraph2D)
  * - Node visual system: default, hovered, active, neighbor, dimmed states
  * - Smart label system with zoom-based filtering and background pills
  * - Interaction system: hover highlighting, click-to-focus, smooth camera motion
@@ -26,6 +26,7 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { GraphData, GraphNode } from "./buildGraph"
+import { useTheme } from "../../state/ThemeContext"
 import "./KnowledgeGraph.css"
 
 // =============================================================================
@@ -35,6 +36,10 @@ import "./KnowledgeGraph.css"
 interface KnowledgeGraphViewProps {
   graph: GraphData
   activeFilePath: string | null
+  /** True while the backend graph is loading (first fetch in flight). */
+  loading?: boolean
+  /** Error message if the backend graph failed to load. */
+  error?: string | null
   onNodeClick: (path: string) => void
   onBack: () => void
 }
@@ -106,6 +111,8 @@ function withAlpha(hex: string, alpha: number): string {
 export function KnowledgeGraphView({
   graph,
   activeFilePath,
+  loading,
+  error,
   onNodeClick,
   onBack,
 }: KnowledgeGraphViewProps) {
@@ -117,6 +124,10 @@ export function KnowledgeGraphView({
   const [focusMode, setFocusMode] = useState(false)
   const [globalScale, setGlobalScale] = useState(1)
   const animationRef = useRef<number | null>(null)
+
+  // Active theme name — used to re-read CSS-variable colors when the theme
+  // changes while the graph is mounted (fixes stale colors after a switch).
+  const { activeThemeName } = useTheme()
 
   // ===========================================================================
   // DATA PREPARATION
@@ -265,7 +276,9 @@ export function KnowledgeGraphView({
       panelBgHover: style.getPropertyValue("--panel-bg-hover").trim() || "#1a1f2e",
       accentSoft: style.getPropertyValue("--accent-soft").trim() || "rgba(122, 162, 247, 0.15)",
     }
-  }, [fgData]) // re-read on data change (theme may have changed)
+    // Re-read on data change or when the active theme changes so colors stay
+    // in sync with a live theme switch, not just when graph data updates.
+  }, [fgData, activeThemeName])
 
   // ===========================================================================
   // LABEL VISIBILITY LOGIC
@@ -601,20 +614,56 @@ export function KnowledgeGraphView({
   // RENDER
   // ===========================================================================
 
+  // Shared header for the non-graph states (loading / error / empty).
+  const stateHeader = (
+    <div className="graph-view-header">
+      <button className="graph-view-back" onClick={onBack} title="Back to Editor">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 12L6 8L10 4" />
+        </svg>
+        <span>Editor</span>
+      </button>
+      <span className="graph-view-title">Knowledge Graph</span>
+      <span className="graph-view-stats" />
+    </div>
+  )
+
+  // Error state — surfaced instead of silently falling back to a different graph.
+  if (error && graph.nodes.length === 0) {
+    return (
+      <div className="graph-view">
+        {stateHeader}
+        <div className="graph-view-empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+          <span className="graph-view-empty-title">Couldn't load the knowledge graph</span>
+          <span className="graph-view-empty-hint">{error}</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading state — only shown before we have any nodes to draw.
+  if (loading && graph.nodes.length === 0) {
+    return (
+      <div className="graph-view">
+        {stateHeader}
+        <div className="graph-view-empty">
+          <span className="graph-view-spinner" aria-hidden="true" />
+          <span className="graph-view-empty-title">Building the knowledge graph…</span>
+          <span className="graph-view-empty-hint">Indexing your notes and resolving links</span>
+        </div>
+      </div>
+    )
+  }
+
   // Empty state
   if (graph.nodes.length === 0) {
     return (
       <div className="graph-view">
-        <div className="graph-view-header">
-          <button className="graph-view-back" onClick={onBack} title="Back to Editor">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10 12L6 8L10 4" />
-            </svg>
-            <span>Editor</span>
-          </button>
-          <span className="graph-view-title">Knowledge Graph</span>
-          <span className="graph-view-stats" />
-        </div>
+        {stateHeader}
         <div className="graph-view-empty">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="6" cy="12" r="2.5" />

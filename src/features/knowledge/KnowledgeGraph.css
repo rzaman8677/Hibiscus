@@ -128,6 +128,28 @@
   line-height: 1.5;
 }
 
+/* Loading spinner for the graph "building index" state. */
+.graph-view-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border, rgba(140, 148, 168, 0.25));
+  border-top-color: var(--accent, #4c8bf5);
+  animation: graph-view-spin 0.7s linear infinite;
+}
+
+@keyframes graph-view-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-view-spinner {
+    animation-duration: 1.6s;
+  }
+}
+
 /* =============================================================================
  * RIGHT-PANEL mini graph (kept for backward compatibility)
  * ============================================================================= */
