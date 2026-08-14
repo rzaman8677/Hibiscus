@@ -408,7 +408,7 @@ fn process_file_event(
             storage::write_topics(workspace_root, &topic_map)
                 .map_err(|e| format!("Failed to write topics: {}", e))?;
 
-            rebuild_note_metadata(workspace_root)?;
+            rebuild_note_metadata_for(workspace_root, Some(file_path))?;
 
             println!(
                 "[Knowledge] Indexed {} ({} chunks)",
@@ -462,7 +462,7 @@ fn remove_file_data(workspace_root: &str, file_path: &str) -> Result<(), String>
     let topic_map = topics::build_topic_map(workspace_root);
     storage::write_topics(workspace_root, &topic_map)
         .map_err(|e| format!("Failed to write topics: {}", e))?;
-    rebuild_note_metadata(workspace_root)?;
+    rebuild_note_metadata_for(workspace_root, Some(file_path))?;
 
     Ok(())
 }
@@ -512,34 +512,45 @@ fn should_ignore_for_knowledge(workspace_root: &str, file_path: &str) -> bool {
     })
 }
 
-fn rebuild_note_metadata(workspace_root: &str) -> Result<(), String> {
+/// Incremental note metadata rebuild. When `changed_file` is `Some`, only re-reads
+/// chunks for that file and reuses the persisted note_index for all others; when
+/// `None` (or when no note_index exists yet), performs a full rebuild.
+/// Link resolution and graph rebuild use in-memory data, avoiding O(files*chunks) disk I/O.
+fn rebuild_note_metadata_for(workspace_root: &str, changed_file: Option<&str>) -> Result<(), String> {
     let file_map = storage::read_file_map(workspace_root);
-    let mut note_index: NoteIndex = HashMap::new();
+    let existing_index = storage::read_note_index(workspace_root);
 
-    for (file, chunk_ids) in &file_map {
-        let mut meta = NoteMetadata {
-            path: file.clone(),
-            name: display_name(file),
-            title: None,
-            tags: Vec::new(),
-            aliases: Vec::new(),
-            links: Vec::new(),
-            resolved_links: Vec::new(),
-            backlinks: Vec::new(),
-            broken_links: Vec::new(),
-            orphan: false,
-        };
-        for chunk_id in chunk_ids {
-            if let Some(chunk) = storage::read_chunk(workspace_root, chunk_id) {
-                if meta.title.is_none() {
-                    meta.title = chunk.heading.clone();
-                }
-                extend_unique(&mut meta.tags, &chunk.tags);
-                extend_unique(&mut meta.aliases, &chunk.aliases);
-                extend_unique(&mut meta.links, &chunk.links);
-            }
+    let mut note_index: NoteIndex = if existing_index.is_empty() || changed_file.is_none() {
+        // Full rebuild: read all chunks (first run or explicit full rebuild)
+        let mut idx: NoteIndex = HashMap::new();
+        for (file, chunk_ids) in &file_map {
+            idx.insert(file.clone(), build_note_meta_from_chunks(workspace_root, file, chunk_ids));
         }
-        note_index.insert(file.clone(), meta);
+        idx
+    } else {
+        // Incremental: reuse existing metadata, only update the changed file
+        let mut idx = existing_index;
+        let changed = changed_file.unwrap();
+
+        // Remove stale entry
+        idx.remove(changed);
+
+        // Remove entries for files no longer in the file_map (deleted files)
+        idx.retain(|path, _| file_map.contains_key(path));
+
+        // Re-read only the changed file's chunks
+        if let Some(chunk_ids) = file_map.get(changed) {
+            idx.insert(changed.to_string(), build_note_meta_from_chunks(workspace_root, changed, chunk_ids));
+        }
+
+        idx
+    };
+
+    // Clear resolved/backlink fields before re-resolving (they're derived)
+    for meta in note_index.values_mut() {
+        meta.resolved_links.clear();
+        meta.backlinks.clear();
+        meta.broken_links.clear();
     }
 
     let mut lookup: HashMap<String, String> = HashMap::new();
@@ -586,6 +597,32 @@ fn rebuild_note_metadata(workspace_root: &str) -> Result<(), String> {
     storage::write_graph(workspace_root, &graph)
         .map_err(|e| format!("Failed to write graph: {}", e))?;
     Ok(())
+}
+
+fn build_note_meta_from_chunks(workspace_root: &str, file: &str, chunk_ids: &[String]) -> NoteMetadata {
+    let mut meta = NoteMetadata {
+        path: file.to_string(),
+        name: display_name(file),
+        title: None,
+        tags: Vec::new(),
+        aliases: Vec::new(),
+        links: Vec::new(),
+        resolved_links: Vec::new(),
+        backlinks: Vec::new(),
+        broken_links: Vec::new(),
+        orphan: false,
+    };
+    for chunk_id in chunk_ids {
+        if let Some(chunk) = storage::read_chunk(workspace_root, chunk_id) {
+            if meta.title.is_none() {
+                meta.title = chunk.heading.clone();
+            }
+            extend_unique(&mut meta.tags, &chunk.tags);
+            extend_unique(&mut meta.aliases, &chunk.aliases);
+            extend_unique(&mut meta.links, &chunk.links);
+        }
+    }
+    meta
 }
 
 fn display_name(path: &str) -> String {
