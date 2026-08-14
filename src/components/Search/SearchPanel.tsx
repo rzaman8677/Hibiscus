@@ -35,6 +35,18 @@ interface TopicMap {
   [topic: string]: string[]
 }
 
+interface IndexingError {
+  file?: string
+  message: string
+  timestamp: string
+}
+
+interface SkippedFile {
+  file: string
+  reason: string
+  timestamp: string
+}
+
 interface SearchPanelProps {
   open: boolean
   onClose: () => void
@@ -52,6 +64,8 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
   const [hasSearched, setHasSearched] = useState(false)
   const [status, setStatus] = useState<KnowledgeStatus | null>(null)
   const [showDashboard, setShowDashboard] = useState(false)
+  const [indexingErrors, setIndexingErrors] = useState<IndexingError[]>([])
+  const [skippedFiles, setSkippedFiles] = useState<SkippedFile[]>([])
 
   // Debounced search
   const debouncedSearch = useCallback(
@@ -92,8 +106,14 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
   const loadStatus = useCallback(async () => {
     if (!workspaceRoot) return
     try {
-      const statusData = await invoke<KnowledgeStatus>("get_knowledge_status")
+      const [statusData, errors, skipped] = await Promise.all([
+        invoke<KnowledgeStatus>("get_knowledge_status"),
+        invoke<IndexingError[]>("get_indexing_errors"),
+        invoke<SkippedFile[]>("get_skipped_files"),
+      ])
       setStatus(statusData)
+      setIndexingErrors(errors ?? [])
+      setSkippedFiles(skipped ?? [])
     } catch (error) {
       console.error("Failed to load knowledge status:", error)
     }
@@ -155,7 +175,7 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
       <div className="search-header">
         <div className="search-header-left">
           <span>Search Knowledge Base</span>
-          {status && <button className={`knowledge-status-badge state-${status.state.toLowerCase().replace(/\s+/g, "-")}`} onClick={() => setShowDashboard((v) => !v)}>{status.state}{status.skipped_count > 0 ? ` / ${status.skipped_count} skipped` : ""}</button>}
+          {status && <button className={`knowledge-status-badge state-${status.state.toLowerCase().replace(/\s+/g, "-")}`} onClick={() => setShowDashboard((v) => !v)}>{status.state}{status.error_count > 0 ? ` / ${status.error_count} error${status.error_count === 1 ? "" : "s"}` : ""}{status.skipped_count > 0 ? ` / ${status.skipped_count} skipped` : ""}</button>}
           {loading && <span className="search-loading">(Loading...)</span>}
         </div>
         <button className="search-close" onClick={onClose}>
@@ -167,6 +187,35 @@ export function SearchPanel({ open, onClose, workspaceRoot, onOpenFile }: Search
         <div className="knowledge-dashboard">
           <div><strong>{status.indexed_files}</strong> files / <strong>{status.chunk_count}</strong> chunks</div>
           <div>Schema v{status.schema_version} / Errors {status.error_count} / Skipped {status.skipped_count}</div>
+
+          {indexingErrors.length > 0 && (
+            <div className="knowledge-issues knowledge-issues-error">
+              <div className="knowledge-issues-title">Failed to index ({indexingErrors.length})</div>
+              <ul className="knowledge-issues-list">
+                {indexingErrors.slice(-8).reverse().map((err, i) => (
+                  <li key={i} title={err.message}>
+                    <span className="knowledge-issue-file">{err.file ? err.file.split(/[\\/]/).pop() : "(unknown)"}</span>
+                    <span className="knowledge-issue-reason">{err.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {skippedFiles.length > 0 && (
+            <div className="knowledge-issues knowledge-issues-skipped">
+              <div className="knowledge-issues-title">Skipped ({skippedFiles.length})</div>
+              <ul className="knowledge-issues-list">
+                {skippedFiles.slice(-8).reverse().map((sf, i) => (
+                  <li key={i} title={sf.file}>
+                    <span className="knowledge-issue-file">{sf.file.split(/[\\/]/).pop()}</span>
+                    <span className="knowledge-issue-reason">{sf.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="knowledge-dashboard-actions">
             <button onClick={rebuildIndex}>Rebuild</button>
             <button onClick={clearIndex}>Clear</button>
