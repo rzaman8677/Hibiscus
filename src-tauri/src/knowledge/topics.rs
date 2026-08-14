@@ -88,9 +88,8 @@ pub fn build_topic_map(workspace_root: &str) -> TopicMap {
 /// - `None` headings become "General".
 /// - Empty headings become "General".
 /// - Leading/trailing whitespace is trimmed.
-/// - Case is preserved (headings like "Introduction" and "introduction" are
-///   treated as distinct topics; this is intentional since heading case
-///   often carries semantic meaning in structured documents).
+/// - Headings are lowercased and then title-cased so that "Introduction",
+///   "introduction", and "INTRODUCTION" all map to the same topic.
 fn normalize_heading(heading: &Option<String>) -> String {
     match heading {
         Some(h) => {
@@ -98,11 +97,30 @@ fn normalize_heading(heading: &Option<String>) -> String {
             if trimmed.is_empty() {
                 "General".to_string()
             } else {
-                trimmed.to_string()
+                title_case(trimmed)
             }
         }
         None => "General".to_string(),
     }
+}
+
+fn title_case(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut capitalize_next = true;
+    for ch in s.to_lowercase().chars() {
+        if ch.is_whitespace() || ch == '-' || ch == '_' {
+            capitalize_next = true;
+            result.push(ch);
+        } else if capitalize_next {
+            for upper in ch.to_uppercase() {
+                result.push(upper);
+            }
+            capitalize_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -115,6 +133,9 @@ mod tests {
         assert_eq!(normalize_heading(&Some("".into())), "General");
         assert_eq!(normalize_heading(&Some("  ".into())), "General");
         assert_eq!(normalize_heading(&Some("Introduction".into())), "Introduction");
+        assert_eq!(normalize_heading(&Some("introduction".into())), "Introduction");
+        assert_eq!(normalize_heading(&Some("INTRODUCTION".into())), "Introduction");
         assert_eq!(normalize_heading(&Some("  Setup  ".into())), "Setup");
+        assert_eq!(normalize_heading(&Some("getting started".into())), "Getting Started");
     }
 }
