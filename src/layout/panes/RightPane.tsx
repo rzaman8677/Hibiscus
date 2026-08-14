@@ -10,6 +10,9 @@ export interface RightPaneProps {
   statsData: any
   knowledgeGraph: any
   knowledgeIndex: any
+  knowledgeBacklinks: Record<string, string[]> | null
+  knowledgeLoading?: boolean
+  knowledgeError?: string | null
   activeFilePath: string | null
 }
 
@@ -25,6 +28,9 @@ export function RightPane(props: RightPaneProps) {
       statsData={props.statsData}
       knowledgeGraph={props.knowledgeGraph}
       knowledgeIndex={props.knowledgeIndex}
+      knowledgeBacklinks={props.knowledgeBacklinks}
+      knowledgeLoading={props.knowledgeLoading}
+      knowledgeError={props.knowledgeError}
       activeFilePath={props.activeFilePath}
     />
   )

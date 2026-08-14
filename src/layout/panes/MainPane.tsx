@@ -6,6 +6,8 @@ export interface MainPaneProps {
   centerView: "editor" | "graph"
   setCenterView: (view: "editor" | "graph") => void
   knowledgeGraph: any
+  knowledgeLoading?: boolean
+  knowledgeError?: string | null
   activeFile: any | null
   activeFilePath: string | null
   activeFileId: string | null
@@ -32,6 +34,8 @@ export function MainPane(props: MainPaneProps) {
         <KnowledgeGraphView
           graph={props.knowledgeGraph}
           activeFilePath={props.activeFilePath}
+          loading={props.knowledgeLoading}
+          error={props.knowledgeError}
           onNodeClick={props.handleGraphNodeClick}
           onBack={() => props.setCenterView("editor")}
         />

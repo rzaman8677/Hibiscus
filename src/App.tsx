@@ -55,6 +55,7 @@ import "./App.css"
 // Knowledge system
 import { useKnowledgeIndex } from "./features/knowledge/useKnowledgeIndex"
 import { buildGraph } from "./features/knowledge/buildGraph"
+import { useBackendKnowledge } from "./features/knowledge/useBackendKnowledge"
 
 // Layout Panes
 import { TopPane } from "./layout/panes/TopPane"
@@ -205,10 +206,28 @@ function AppInner() {
     buffersRef
   )
 
-  // Memoize graph data based on index version to avoid recalculation
-  const knowledgeGraph = useMemo(
+  // Frontend-only graph (regex-based, in-memory) — used purely as a fallback
+  // when the backend graph is unavailable (e.g. first index still building).
+  const fallbackGraph = useMemo(
     () => buildGraph(knowledgeIndex),
     [knowledgeIndex.version]
+  )
+
+  // Canonical knowledge graph + backlinks from the Rust backend (single source
+  // of truth: chunk-based, PDF/DOCX-aware, refreshes on filesystem changes).
+  const {
+    graph: backendGraph,
+    backlinks: backendBacklinks,
+    loading: knowledgeLoading,
+    error: knowledgeError,
+  } = useBackendKnowledge(workspaceRoot)
+
+  // Prefer the backend graph; fall back to the frontend graph only when the
+  // backend has no nodes yet. Both center and right panels use this same value
+  // so they can never disagree.
+  const knowledgeGraph = useMemo(
+    () => (backendGraph && backendGraph.nodes.length > 0 ? backendGraph : fallbackGraph),
+    [backendGraph, fallbackGraph]
   )
 
   // ============================================================================
@@ -483,6 +502,8 @@ function AppInner() {
             centerView={centerView}
             setCenterView={setCenterView}
             knowledgeGraph={knowledgeGraph}
+            knowledgeLoading={knowledgeLoading}
+            knowledgeError={knowledgeError}
             activeFile={activeFile}
             activeFilePath={activeFilePath}
             activeFileId={activeFileId}
@@ -511,6 +532,9 @@ function AppInner() {
             statsData={statsData}
             knowledgeGraph={knowledgeGraph}
             knowledgeIndex={knowledgeIndex}
+            knowledgeBacklinks={backendBacklinks}
+            knowledgeLoading={knowledgeLoading}
+            knowledgeError={knowledgeError}
             activeFilePath={activeFilePath}
           />
         }

@@ -7,6 +7,9 @@ import { mockInvoke } from '../../setup';
 describe('RightPanelContainer Knowledge Features', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Container mounts useCalendarController, which invokes read_calendar_data.
+    // Provide a benign default so unrelated invokes resolve instead of returning undefined.
+    mockInvoke.mockResolvedValue({});
   });
 
   const renderWithContext = (view: 'knowledge-graph' | 'backlinks', props: any = {}) => {
@@ -40,42 +43,33 @@ describe('RightPanelContainer Knowledge Features', () => {
     );
   };
 
-  it('renders backend knowledge graph data', async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === 'get_knowledge_graph') {
-        return Promise.resolve({
-          nodes: [{ id: '/mock/root/file1.md', label: 'File 1', tags: [], degree: 1 }],
-          edges: []
-        });
+  // We mock the child component to easily verify props.
+  // (Hoisted by Vitest above imports, so it applies to the whole file.)
+  vi.mock('../../../src/features/knowledge/KnowledgeGraphView', () => ({
+    KnowledgeGraphView: ({ graph }: any) => <div data-testid="graph-view">Nodes: {graph.nodes.length}</div>
+  }));
+
+  it('renders the knowledge graph it is given via props', async () => {
+    // Data now flows in as props (fetched once in App via useBackendKnowledge),
+    // rather than being fetched inside the container.
+    renderWithContext('knowledge-graph', {
+      knowledgeGraph: {
+        nodes: [{ id: '/mock/root/file1.md', label: 'File 1', tags: [], degree: 1 }],
+        edges: []
       }
-      if (command === 'get_backlinks') return Promise.resolve({});
-      return Promise.resolve();
     });
-
-    // We mock the child component to easily verify props
-    vi.mock('../../../src/features/knowledge/KnowledgeGraphView', () => ({
-      KnowledgeGraphView: ({ graph }: any) => <div data-testid="graph-view">Nodes: {graph.nodes.length}</div>
-    }));
-
-    renderWithContext('knowledge-graph');
 
     await waitFor(() => {
       expect(screen.getByTestId('graph-view')).toHaveTextContent('Nodes: 1');
     });
   });
 
-  it('renders backend backlinks data', async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === 'get_knowledge_graph') return Promise.resolve({ nodes: [], edges: [] });
-      if (command === 'get_backlinks') {
-        return Promise.resolve({
-          '/mock/root/target.md': ['/mock/root/source1.md', '/mock/root/source2.md']
-        });
+  it('renders backlinks from the backend backlink map prop', async () => {
+    renderWithContext('backlinks', {
+      knowledgeBacklinks: {
+        '/mock/root/target.md': ['/mock/root/source1.md', '/mock/root/source2.md']
       }
-      return Promise.resolve();
     });
-
-    renderWithContext('backlinks');
 
     await waitFor(() => {
       // The panel shows the count in the header

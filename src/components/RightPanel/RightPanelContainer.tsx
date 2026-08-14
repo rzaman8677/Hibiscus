@@ -18,8 +18,7 @@
  * ============================================================================
  */
 
-import { useState, useMemo, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { useState, useMemo } from "react"
 import { RightPanel } from "./RightPanel"
 import { CalendarView } from "./CalendarView"
 import { DailyPlanner } from "./PlannerSection/DailyPlanner"
@@ -63,10 +62,16 @@ interface RightPanelContainerProps {
         weeklyData: DailyAggregate[]
         recentSessions: StudySession[]
     }
-    /** Knowledge graph data (memoized by caller) */
+    /** Knowledge graph data — already resolved (backend-preferred) by the caller. */
     knowledgeGraph?: GraphData
-    /** Knowledge index for backlinks */
+    /** Knowledge index — frontend fallback source for backlinks. */
     knowledgeIndex?: KnowledgeIndex
+    /** Backend backlink map (target path -> source paths), or null if unavailable. */
+    knowledgeBacklinks?: Record<string, string[]> | null
+    /** True while the backend knowledge graph is loading. */
+    knowledgeLoading?: boolean
+    /** Error message if the backend knowledge graph failed to load. */
+    knowledgeError?: string | null
     /** Currently active file path (for backlinks panel) */
     activeFilePath?: string | null
 }
@@ -94,37 +99,13 @@ export function RightPanelContainer({
     statsData,
     knowledgeGraph,
     knowledgeIndex,
+    knowledgeBacklinks,
+    knowledgeLoading,
+    knowledgeError,
     activeFilePath,
 }: RightPanelContainerProps) {
     const { events, tasks, toggleTask, addEvent, updateEvent, deleteEvent } = useCalendarController(workspaceRoot)
     const { rightPanelView, setRightPanelView } = useStudy()
-    const [backendGraph, setBackendGraph] = useState<GraphData | null>(null)
-    const [backendBacklinks, setBackendBacklinks] = useState<Record<string, string[]> | null>(null)
-
-    useEffect(() => {
-        if (!workspaceRoot) return
-        let cancelled = false
-        async function loadBackendKnowledge() {
-            try {
-                const [graph, backlinks] = await Promise.all([
-                    invoke<GraphData>("get_knowledge_graph"),
-                    invoke<Record<string, string[]>>("get_backlinks"),
-                ])
-                if (!cancelled) {
-                    if (graph.nodes?.length) setBackendGraph(graph)
-                    setBackendBacklinks(backlinks)
-                }
-            } catch (error) {
-                console.warn("[Knowledge] Backend graph unavailable, using frontend fallback", error)
-            }
-        }
-        loadBackendKnowledge()
-        const interval = window.setInterval(loadBackendKnowledge, 5000)
-        return () => {
-            cancelled = true
-            window.clearInterval(interval)
-        }
-    }, [workspaceRoot])
 
     // UI State for calendar
     const [modalOpen, setModalOpen] = useState(false)
@@ -193,46 +174,30 @@ export function RightPanelContainer({
                     />
                 )
             case "knowledge-graph":
-                return (backendGraph || knowledgeGraph) ? (
+                return (
                     <KnowledgeGraphView
-                        graph={backendGraph || knowledgeGraph!}
+                        graph={knowledgeGraph ?? { nodes: [], edges: [] }}
                         activeFilePath={activeFilePath ?? null}
+                        loading={knowledgeLoading}
+                        error={knowledgeError}
                         onNodeClick={onOpenFile}
                         onBack={() => {}}
                     />
-                ) : null
-            case "backlinks":
-                if (backendBacklinks && activeFilePath) {
-                    const links = Array.from(new Set(backendBacklinks[activeFilePath] || []))
-                    return (
-                        <div className="backlinks-panel">
-                            <div className="backlinks-header">
-                                <span className="backlinks-title">Backlinks</span>
-                                <span className="backlinks-count">{links.length}</span>
-                            </div>
-                            {links.length === 0 ? (
-                                <div className="backlinks-empty">No notes link to this file</div>
-                            ) : (
-                                <ul className="backlinks-list">
-                                    {links.map((sourcePath) => (
-                                        <li key={sourcePath} className="backlinks-item">
-                                            <button className="backlinks-link" onClick={() => onOpenFile(sourcePath)} title={sourcePath}>
-                                                <span>{sourcePath.split(/[\\/]/).pop()?.replace(/\.(md|txt|markdown)$/i, "") || sourcePath}</span>
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
-                        </div>
-                    )
-                }
-                return knowledgeIndex ? (
+                )
+            case "backlinks": {
+                // Prefer the backend backlink map (canonical); fall back to the
+                // frontend index only when the backend has no data for this file.
+                const backendLinks = activeFilePath ? knowledgeBacklinks?.[activeFilePath] : undefined
+                const fallbackLinks = activeFilePath ? knowledgeIndex?.backlinks.get(activeFilePath) : undefined
+                const links = Array.from(new Set(backendLinks ?? fallbackLinks ?? []))
+                return (
                     <BacklinksPanel
                         currentPath={activeFilePath ?? null}
-                        index={knowledgeIndex}
+                        backlinks={links}
                         onOpenFile={onOpenFile}
                     />
-                ) : null
+                )
+            }
             case "pomodoro":
                 return (
                     <PomodoroPanel

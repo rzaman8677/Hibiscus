@@ -8,7 +8,6 @@
  * ============================================================================
  */
 
-import type { KnowledgeIndex } from "./useKnowledgeIndex"
 import "./BacklinksPanel.css"
 
 // =============================================================================
@@ -17,7 +16,8 @@ import "./BacklinksPanel.css"
 
 interface BacklinksPanelProps {
   currentPath: string | null
-  index: KnowledgeIndex
+  /** Source paths that link to currentPath (already resolved + deduplicated by caller). */
+  backlinks: string[]
   onOpenFile: (path: string) => void
 }
 
@@ -35,7 +35,7 @@ function displayName(path: string): string {
 // COMPONENT
 // =============================================================================
 
-export function BacklinksPanel({ currentPath, index, onOpenFile }: BacklinksPanelProps) {
+export function BacklinksPanel({ currentPath, backlinks, onOpenFile }: BacklinksPanelProps) {
   if (!currentPath) {
     return (
       <div className="backlinks-panel">
@@ -48,8 +48,6 @@ export function BacklinksPanel({ currentPath, index, onOpenFile }: BacklinksPane
       </div>
     )
   }
-
-  const backlinks = index.backlinks.get(currentPath) || []
 
   // Deduplicate (safety net)
   const unique = Array.from(new Set(backlinks))
