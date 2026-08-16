@@ -119,6 +119,20 @@ export function useEditorController(workspaceRoot: string | null) {
         saveTimerRef.current = null
       }
 
+      // GUARD: never write a text buffer over a binary document.
+      //
+      // Binary files (PDF, DOCX, images) are opened read-only with an empty
+      // placeholder buffer so Monaco has something to bind to. Writing that
+      // buffer back would truncate the real file to zero bytes. This guard is
+      // the last line of defence -- onChange already refuses to mark these
+      // buffers dirty -- because the consequence is unrecoverable data loss.
+      if (isBinaryFile(path)) {
+        console.warn(
+          `[Hibiscus] Refusing to write text to binary file: ${path.split(/[/\\]/).pop()}`
+        )
+        return
+      }
+
       const doSave = async () => {
         if (isSavingRef.current) return
 
@@ -411,6 +425,12 @@ export function useEditorController(workspaceRoot: string | null) {
     (value: string) => {
       if (!activeFilePath) return
 
+      // Binary documents are read-only. Monaco stays mounted (hidden) while a
+      // PDF/DOCX is active, so it can still emit change events for the
+      // placeholder buffer; acting on them would mark the file dirty and
+      // trigger an auto-save that destroys it.
+      if (isBinaryFile(activeFilePath)) return
+
       // Update buffer
       const buffer = buffersRef.current.get(activeFilePath)
       if (buffer) {
@@ -504,9 +524,10 @@ export function useEditorController(workspaceRoot: string | null) {
         clearTimeout(saveTimerRef.current)
       }
 
-      // Attempt to save dirty files on unmount
+      // Attempt to save dirty files on unmount. Binary documents are read-only
+      // and must never be written from a text buffer.
       buffersRef.current.forEach(async (buffer, path) => {
-        if (buffer.isDirty) {
+        if (buffer.isDirty && !isBinaryFile(path)) {
           try {
             await invoke("write_text_file", {
               path,
@@ -544,6 +565,12 @@ export function useEditorController(workspaceRoot: string | null) {
         })
 
         if (wasModified) {
+          // Binary documents have no text buffer to diff. Reading them as text
+          // throws, which the catch below used to interpret as "file deleted",
+          // silently closing the tab whenever a PDF/DOCX changed on disk.
+          // The viewers re-read these from disk themselves.
+          if (isBinaryFile(filePath)) continue
+
           try {
             // Read current disk content
             const diskContent = await invoke<string>("read_text_file", {
@@ -620,9 +647,17 @@ export function useEditorController(workspaceRoot: string | null) {
       // Open each file from the session, skipping any that fail to load
       for (const filePath of session.openFiles) {
         try {
-          const content = await invoke<string>("read_text_file", {
-            path: filePath,
-          })
+          // Binary documents restore as read-only placeholder buffers, the
+          // same shape openFile() creates. Reading them as text throws, which
+          // previously dropped every PDF/DOCX tab on restart.
+          let content: string
+          if (isBinaryFile(filePath)) {
+            const exists = await invoke<boolean>("file_exists", { path: filePath })
+            if (!exists) throw new Error("File no longer exists")
+            content = ""
+          } else {
+            content = await invoke<string>("read_text_file", { path: filePath })
+          }
           const name = filePath.split(/[/\\]/).pop() || filePath
           const buffer: FileBuffer = {
             content,
@@ -700,10 +735,19 @@ export function useEditorController(workspaceRoot: string | null) {
         if (newPath) {
           const buffer = buffersRef.current.get(activeFilePath)
           if (buffer) {
-            await invoke("write_text_file", {
-              path: newPath,
-              contents: buffer.content,
-            })
+            if (isBinaryFile(activeFilePath)) {
+              // Binary documents have no text buffer -- copy the bytes.
+              // Writing buffer.content here produced an empty file.
+              await invoke("copy_file", {
+                source: activeFilePath,
+                destination: newPath,
+              })
+            } else {
+              await invoke("write_text_file", {
+                path: newPath,
+                contents: buffer.content,
+              })
+            }
 
             // Update buffer to new path
             buffersRef.current.delete(activeFilePath)

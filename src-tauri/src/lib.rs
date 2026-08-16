@@ -73,6 +73,8 @@ pub fn run() {
             commands::read_text_file,
             commands::read_file_binary,
             commands::write_text_file,
+            commands::copy_file,
+            commands::file_exists,
             commands::create_file,
             commands::create_folder,
             commands::delete_file,
@@ -114,6 +116,7 @@ pub fn run() {
             knowledge::get_skipped_files,
             knowledge::get_knowledge_graph,
             knowledge::get_backlinks,
+            knowledge::extract_document_to_note,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hibiscus");

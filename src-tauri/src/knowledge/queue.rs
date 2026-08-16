@@ -307,9 +307,39 @@ fn process_file_event(
     file_path: &str,
     event_type: &FileEventType,
 ) -> Result<(), String> {
+    process_file_event_inner(workspace_root, file_path, event_type, false)
+}
+
+/// Rebuild the corpus-wide derived structures: the scored (TF-IDF) index, the
+/// topic map, and note metadata (which in turn produces backlinks + the graph).
+///
+/// Each of these is O(corpus), so during a full scan they are computed once at
+/// the end rather than after every file — doing it per file made initial
+/// indexing O(n^2) and was the main reason a large workspace took minutes.
+fn rebuild_aggregates(workspace_root: &str, changed_file: Option<&str>) -> Result<(), String> {
+    let index = storage::read_keyword_index(workspace_root);
+    let manifest = storage::read_manifest(workspace_root);
+
+    let scored = indexer::rebuild_scored_index(&index, manifest.chunk_count);
+    storage::write_scored_index(workspace_root, &scored)
+        .map_err(|e| format!("Failed to write scored index: {}", e))?;
+
+    let topic_map = topics::build_topic_map(workspace_root);
+    storage::write_topics(workspace_root, &topic_map)
+        .map_err(|e| format!("Failed to write topics: {}", e))?;
+
+    rebuild_note_metadata_for(workspace_root, changed_file)
+}
+
+fn process_file_event_inner(
+    workspace_root: &str,
+    file_path: &str,
+    event_type: &FileEventType,
+    defer_aggregates: bool,
+) -> Result<(), String> {
     match event_type {
         FileEventType::Delete => {
-            remove_file_data(workspace_root, file_path)?;
+            remove_file_data(workspace_root, file_path, defer_aggregates)?;
             println!("[Knowledge] Removed index data for deleted file: {}", file_path);
         }
         FileEventType::Create | FileEventType::Modify | FileEventType::Rename => {
@@ -343,8 +373,10 @@ fn process_file_event(
                 }
             }
 
-            // File is new or changed. Remove old data first.
-            remove_file_data(workspace_root, file_path)?;
+            // File is new or changed. Remove old data first. Aggregates are
+            // always deferred here — this branch rebuilds them at the end, and
+            // doing it in both places doubled the work on every save.
+            remove_file_data(workspace_root, file_path, true)?;
 
             // Parse the file.
             let parser = parser::parser_for_path(file_path)
@@ -397,18 +429,12 @@ fn process_file_event(
             storage::write_manifest(workspace_root, &manifest)
                 .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
-            // Phase 2: rebuild scored keyword index (TF-IDF light).
-            // This reuses the keyword index already in memory, so no extra disk read.
-            let scored = indexer::rebuild_scored_index(&index, manifest.chunk_count);
-            storage::write_scored_index(workspace_root, &scored)
-                .map_err(|e| format!("Failed to write scored index: {}", e))?;
-
-            // Phase 2: rebuild topic map from chunk headings.
-            let topic_map = topics::build_topic_map(workspace_root);
-            storage::write_topics(workspace_root, &topic_map)
-                .map_err(|e| format!("Failed to write topics: {}", e))?;
-
-            rebuild_note_metadata_for(workspace_root, Some(file_path))?;
+            // Corpus-wide derived structures (scored index, topics, note
+            // metadata/graph/backlinks). Skipped during a full scan, which
+            // rebuilds them once at the end instead of once per file.
+            if !defer_aggregates {
+                rebuild_aggregates(workspace_root, Some(file_path))?;
+            }
 
             println!(
                 "[Knowledge] Indexed {} ({} chunks)",
@@ -423,7 +449,14 @@ fn process_file_event(
 
 /// Remove all stored data for a single file: chunks, file_map entry,
 /// keyword index entries, and file hash entry.
-fn remove_file_data(workspace_root: &str, file_path: &str) -> Result<(), String> {
+///
+/// `defer_aggregates` skips the corpus-wide rebuild for callers that will do it
+/// themselves (a re-index, or a full scan).
+fn remove_file_data(
+    workspace_root: &str,
+    file_path: &str,
+    defer_aggregates: bool,
+) -> Result<(), String> {
     let mut file_map = storage::read_file_map(workspace_root);
     let chunk_ids = file_map.remove(file_path).unwrap_or_default();
 
@@ -456,13 +489,9 @@ fn remove_file_data(workspace_root: &str, file_path: &str) -> Result<(), String>
     storage::write_manifest(workspace_root, &manifest)
         .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
-    let scored = indexer::rebuild_scored_index(&index, manifest.chunk_count);
-    storage::write_scored_index(workspace_root, &scored)
-        .map_err(|e| format!("Failed to write scored index: {}", e))?;
-    let topic_map = topics::build_topic_map(workspace_root);
-    storage::write_topics(workspace_root, &topic_map)
-        .map_err(|e| format!("Failed to write topics: {}", e))?;
-    rebuild_note_metadata_for(workspace_root, Some(file_path))?;
+    if !defer_aggregates {
+        rebuild_aggregates(workspace_root, Some(file_path))?;
+    }
 
     Ok(())
 }
@@ -744,6 +773,12 @@ pub fn initial_scan(workspace_root: &str) -> Result<usize, String> {
 
     let mut count = 0;
     scan_directory(workspace_root, workspace_root, &mut count)?;
+
+    // Per-file aggregate rebuilds are deferred during the scan (see
+    // `rebuild_aggregates`); do the single corpus-wide pass now so search,
+    // topics, backlinks and the graph are all populated when the scan returns.
+    rebuild_aggregates(workspace_root, None)?;
+
     let mut manifest = storage::read_manifest(workspace_root);
     manifest.schema_version = current_schema_version();
     manifest.index_state = "Ready".to_string();
@@ -787,9 +822,10 @@ fn scan_directory(
         }
     }
 
-    // Process files in this directory.
+    // Process files in this directory. Aggregates are deferred to the end of
+    // the whole scan by `initial_scan`.
     for file_path in files_to_process {
-        match process_file_event(workspace_root, &file_path, &FileEventType::Create) {
+        match process_file_event_inner(workspace_root, &file_path, &FileEventType::Create, true) {
             Ok(()) => *count += 1,
             Err(e) => eprintln!("[Knowledge] Scan error for {}: {}", file_path, e),
         }

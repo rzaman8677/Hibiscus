@@ -2,8 +2,8 @@
 
 Hibiscus exposes multiple Rust commands to the React frontend via Tauri's IPC (`@tauri-apps/api/core`). This reference documents all available commands.
 
-**Version**: 0.3.7  
-**Last Updated**: May 2026
+**Version**: 0.13.1  
+**Last Updated**: August 2026
 
 ---
 
@@ -159,6 +159,37 @@ Deletes a directory.
 
 ---
 
+#### `copy_file(source: String, destination: String) -> Result<(), HibiscusError>`
+**File**: `commands/files.rs`
+
+Copies a file byte-for-byte from one path to another. Used for binary "Save As" operations where writing a text buffer would destroy the original content.
+
+**Parameters:**
+- `source`: Absolute path of the file to copy
+- `destination`: Absolute path for the copy
+
+**Security:**
+- Both paths validated with `validate_path()` (prevents directory traversal)
+
+**When to use:** Whenever you need to duplicate a PDF, DOCX, or other binary file. Do not use `write_text_file` for binary Save As — it will zero out the file.
+
+---
+
+#### `file_exists(path: String) -> Result<bool, HibiscusError>`
+**File**: `commands/files.rs`
+
+Cheap existence check without reading file contents. Used by session restore to decide whether to reopen a tab (true) or silently drop it (false) for files that were deleted while Hibiscus was closed.
+
+**Parameters:**
+- `path`: Absolute path to check
+
+**Returns:**
+- `Ok(true)`: File exists
+- `Ok(false)`: File does not exist
+- `Err`: Path validation failure
+
+---
+
 ### Move Operations
 
 #### `move_node(source: String, target: String) -> Result<(), HibiscusError>`
@@ -260,15 +291,16 @@ Builds recursive directory tree structure.
 #### `watch_workspace(path: String) -> Result<(), String>`
 **File**: `watcher.rs`
 
-Starts filesystem watcher for real-time updates.
+Starts the filesystem watcher and triggers the initial knowledge index scan.
 
 **Parameters:**
 - `path`: Root directory to watch
 
 **Behavior:**
 - Spawns async notify thread
-- Debounces events (300ms)
-- Emits `fs-changed` events to frontend
+- Runs `initial_scan()` in a background thread immediately on call, then begins live event monitoring
+- Debounces live events (300ms)
+- Emits `fs-changed`, `knowledge-indexing`, and `knowledge-updated` events to the frontend
 - Watches recursively
 
 ---
@@ -492,6 +524,75 @@ Triggers full workspace re-index.
 
 ---
 
+## Knowledge Graph API
+
+#### `get_knowledge_graph() -> Result<GraphData, String>`
+**Module**: `knowledge/query.rs`
+
+Returns the full knowledge graph derived from the persisted chunk store. This is the canonical data source for `KnowledgeGraphView` and should be preferred over the frontend-only `useKnowledgeIndex` for any graph rendering.
+
+**Returns:**
+```typescript
+interface GraphData {
+  nodes: GraphNode[]  // One per indexed file
+  edges: GraphEdge[]  // Derived from wiki-links and backlinks
+}
+```
+
+**Frontend usage:**
+```typescript
+const graph = await invoke<GraphData>("get_knowledge_graph")
+```
+
+---
+
+#### `get_backlinks() -> Result<Record<string, string[]>, String>`
+**Module**: `knowledge/query.rs`
+
+Returns a map of target path → list of source paths that link to it. Used by `BacklinksPanel` and `useBackendKnowledge`.
+
+**Returns:**
+```typescript
+// { "/workspace/target.md": ["/workspace/source.md", ...] }
+type BacklinkMap = Record<string, string[]>
+```
+
+---
+
+#### `extract_document_to_note(source_path: String) -> Result<String, String>`
+**Module**: `knowledge/query.rs`
+
+Runs the knowledge parser on a PDF or DOCX file and writes the extracted content as a structured Markdown note alongside the original document.
+
+**Parameters:**
+- `source_path`: Absolute path to the PDF or DOCX file
+
+**Returns:**
+- `Ok(String)`: The absolute path to the newly created note file
+
+**Behaviour:**
+- Uses the same parsers as the indexer (page-per-section for PDF, heading-style detection for DOCX)
+- Writes YAML frontmatter with `source:` field recording the original document path
+- Never overwrites existing notes: uses numeric suffixes (`-note.md`, `-note-2.md`, etc.)
+- The created note is a regular Markdown file and will be picked up by the indexer on the next `fs-changed` event
+
+**Example output (`paper-note.md`):**
+```markdown
+---
+source: /workspace/paper.pdf
+---
+
+# Page 1
+
+First page content here…
+
+# Page 2
+
+Second page content here…
+```
+
+---
+
 ## Knowledge Indexing (Phase 2)
 
 #### `search_chunks(query: String, offset: Option<usize>, limit: Option<usize>, state: State) -> Result<Vec<RankedSearchResult>, String>`
@@ -617,26 +718,38 @@ Errors serialize to frontend-friendly strings while preserving type information 
 #### `fs-changed`
 **Source**: `watcher.rs`
 
-Emitted when filesystem changes detected.
+Emitted when the filesystem watcher detects a change. Payload is an array of changed paths (strings). The editor uses this to reload open buffers; `useBackendKnowledge` uses it (debounced 600ms) to refetch the graph.
 
-**Payload:**
-```typescript
-interface FsChangedEvent {
-  type: "create" | "modify" | "delete" | "rename";
-  path: string;
-  oldPath?: string;  // For renames
-}
-```
+**Payload:** `string[]` — list of changed absolute paths
 
 **Frontend Usage:**
 ```typescript
 import { listen } from "@tauri-apps/api/event";
 
-listen("fs-changed", (event) => {
-  console.log("File changed:", event.payload);
-  refreshTree();
+listen<string[]>("fs-changed", (event) => {
+  for (const path of event.payload) {
+    // reload buffer, invalidate DOCX cache, etc.
+  }
 });
 ```
+
+---
+
+#### `knowledge-indexing`
+**Source**: `watcher.rs`
+
+Emitted when the initial workspace scan starts (`true`) and when it finishes (`false`). Can be used to show a loading indicator while the graph is being populated for the first time.
+
+**Payload:** `boolean`
+
+---
+
+#### `knowledge-updated`
+**Source**: `watcher.rs`
+
+Emitted once after the initial scan completes. `useBackendKnowledge` listens for this to trigger an immediate graph refetch, ensuring the frontend reflects the freshly indexed workspace without waiting for the debounced `fs-changed` path.
+
+**Payload:** none
 
 ---
 
@@ -692,6 +805,8 @@ unlisten();
 | `read_text_file` | files.rs | ✓ | Read text content |
 | `read_file_binary` | files.rs | ✓ | Read binary content |
 | `write_text_file` | files.rs | ✓ | Write text content |
+| `copy_file` | files.rs | ✓ | Byte-accurate file copy (binary Save As) |
+| `file_exists` | files.rs | ✓ | Cheap existence check |
 | `create_file` | files.rs | ✓ | Create empty file |
 | `create_folder` | files.rs | ✓ | Create directory |
 | `delete_file` | files.rs | ✓ | Delete file |
@@ -702,7 +817,7 @@ unlisten();
 | `load_workspace` | workspace.rs | ✓ | Load workspace data |
 | `save_workspace` | workspace.rs | ✓ | Save workspace data |
 | `build_tree` | tree.rs | ✗ | Build file tree |
-| `watch_workspace` | watcher.rs | ✗ | Start file watcher |
+| `watch_workspace` | watcher.rs | ✗ | Start watcher + initial scan |
 | `stop_watching` | watcher.rs | ✗ | Stop file watcher |
 | `is_watching` | watcher.rs | ✗ | Check watcher status |
 | `get_watched_path` | watcher.rs | ✗ | Get watched path |
@@ -715,10 +830,13 @@ unlisten();
 | `save_study_data` | study.rs | ✓ | Save study data |
 | `normalize_path` | path.rs | ✗ | Normalize separators |
 | `join_paths` | path.rs | ✗ | Join path segments |
-| `search_knowledge` | knowledge | ✓ | Legacy search |
+| `get_knowledge_graph` | knowledge/query.rs | ✓ | Full graph (canonical) |
+| `get_backlinks` | knowledge/query.rs | ✓ | Backlink map |
+| `extract_document_to_note` | knowledge/query.rs | ✓ | PDF/DOCX → Markdown note |
+| `search_knowledge` | knowledge | ✓ | Legacy search (Phase 1) |
 | `get_chunk` | knowledge | ✓ | Get chunk by ID |
 | `rebuild_knowledge_index` | knowledge | ✓ | Rebuild index |
-| `search_chunks` | knowledge | ✓ | Ranked search |
+| `search_chunks` | knowledge | ✓ | Ranked TF-IDF search |
 | `get_topics` | knowledge | ✓ | Get topic map |
 
 ---

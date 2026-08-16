@@ -121,6 +121,8 @@ interface EditorViewProps {
   onCursorChange?: (position: CursorPosition) => void
   onSave?: () => void
   markdownViewMode?: "live-preview" | "source"
+  /** Opens a file in the editor (used by document viewers to open extracted notes) */
+  onOpenFile?: (path: string) => void
 }
 
 export function EditorView({
@@ -131,6 +133,7 @@ export function EditorView({
   onCursorChange,
   onSave,
   markdownViewMode = "live-preview",
+  onOpenFile,
 }: EditorViewProps) {
   // Refs for Monaco editor instance and container DOM element
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -310,7 +313,7 @@ export function EditorView({
         display: 'flex'
       }}
     >
-      <FileRenderer file={{ path }} content={content} markdownViewMode={markdownViewMode}>
+      <FileRenderer file={{ path }} content={content} markdownViewMode={markdownViewMode} onOpenFile={onOpenFile}>
         {/* Monaco Editor Container */}
         <div
           ref={containerRef}

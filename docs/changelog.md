@@ -4,6 +4,50 @@
 
 All notable changes to the **Hibiscus** project will be documented in this file.
 
+## [v0.13.1] - Pipeline Auto-Scan, Binary Safety, Document Viewers
+
+### Critical Bug Fixes
+
+- **Binary file data destruction** (`useEditorController`): Multiple code paths could silently zero out PDF and DOCX files. Monaco stays mounted and hidden while a binary document is active, meaning it was still bound to an empty placeholder buffer. Any change event (including accidental keystrokes while the hidden editor was focused), auto-save debounce, Save As, the unmount handler, or session restore could reach `write_text_file` with that empty string and permanently destroy the document. All five paths now check `isBinaryFile(path)` and bail out early. 8 regression tests in `tests/binaryFileSafety.test.ts` lock these invariants down.
+- **DOCX tab closed on external edit**: The `fs-changed` handler called `read_text_file` on every open buffer path, including binary ones. Reading a DOCX as UTF-8 throws a decode error, which was caught and interpreted as "file deleted" — closing the tab. Binary paths are now skipped in the handler entirely.
+- **Session restore losing binary tabs**: The restore path loaded all tabs as text, silently dropping PDFs and DOCX files that couldn't be decoded. Now uses `file_exists` (cheap existence check only) for binary paths and restores their tabs with the empty placeholder buffer intact.
+
+### Knowledge Pipeline
+
+- **Initial scan on workspace open** (`watcher.rs`): `watch_workspace` now calls `initial_scan()` automatically in a background thread before processing live events. Previously the knowledge base, graph, and topics stayed empty until the user manually edited each file — the pipeline was purely event-driven with no bootstrapping. The watcher emits `knowledge-indexing` (bool) and `knowledge-updated` events so the frontend can reflect scan progress.
+- **O(n²) aggregate rebuild eliminated** (`queue.rs`): The scored index, topic map, and note metadata were each rebuilt after every individual file during a batch scan. For a workspace with 1000 files this was 3000 full rebuilds. Consolidated into `rebuild_aggregates()`, deferred during scans, and called exactly once at the end.
+- **Case-insensitive topic normalisation** (`topics.rs`): Heading text is now title-cased before grouping, so `"introduction"`, `"Introduction"`, and `"INTRODUCTION"` from different documents all merge into the same topic.
+
+### Parser Improvements
+
+- **PDF — page provenance** (`parser.rs`): Switched to `pdf_extract::extract_text_by_pages()`. Each page becomes a separate section with `"Page N"` as the heading — search results now tell you which page a hit is on. Previously the entire document was one flat blob.
+- **PDF — text normalisation**: `normalize_pdf_text()` rejoins layout line-breaks and de-hyphenates split words (`"knowl-\nedge"` → `"knowledge"`). Without this, PDF tokens were fragmented and never matched full search terms.
+- **DOCX — heading structure recovered**: The DOCX parser now reads `<w:pStyle>` XML attributes to detect Word heading styles (`Heading1`–`Heading9`, `Title`, `Subtitle`, localised variants). Before this fix, every paragraph was treated as body text regardless of its style, so all Word content collapsed into the "General" topic with no structure.
+
+### Document Viewers (`FileRenderer`)
+
+- **PDF**: Renders all pages (was page 1 only). Container-width sizing via `ResizeObserver` (was `window.innerWidth`). Themed via CSS variables.
+- **DOCX**: Cache invalidated on `fs-changed` — external edits now visible without restarting. HTML from mammoth sanitised via `DOMParser` (strips `<script>`, event handlers, `javascript:` URLs). Themed page-column layout via `FileRenderer.css`.
+- **Document toolbar**: Read-only badge + "Extract to Note" action button on all binary viewers.
+
+### Extract to Note
+
+- New `extract_document_to_note` Tauri command (`knowledge/query.rs`): runs the full knowledge parser on a PDF or DOCX and writes a structured Markdown note alongside the original. YAML frontmatter records the `source:` path. Heading structure preserved (page numbers for PDF, Word heading styles for DOCX). Never overwrites existing notes (numbered suffixes). The indexer picks it up immediately as a regular note.
+
+### New Tauri Commands
+
+- `copy_file(source, destination)` — byte-accurate file copy for binary Save As.
+- `file_exists(path)` — cheap existence check for session restore.
+- `extract_document_to_note(source_path)` — PDF/DOCX → structured Markdown note.
+
+### Knowledge Graph (Plan A)
+
+- `useBackendKnowledge` is now the canonical graph source, replacing the ephemeral frontend-only `useKnowledgeIndex` for all graph and backlinks rendering. Reactive on `fs-changed` (600ms debounce) + `knowledge-updated` instead of a fixed 5-second poll.
+- `BacklinksPanel` simplified to accept a resolved `string[]` — no longer touches `KnowledgeIndex` directly.
+- `SearchPanel` surfaces indexing errors and skipped files from the backend status response.
+- `KnowledgeGraphView` redesigned: categorical node colours + shapes (colour-blind safe), hub rings for high-degree nodes, hollow orphan rendering, amber edge highlight on hover, Fit/Relayout toolbar buttons, collapsible legend with shape glyphs.
+- Drag zoom-out bug fixed: `alphaTarget` managed on drag start/end, forces bounded, camera re-centering suppressed while dragging.
+
 ## [v0.12.0] - Knowledge Base Robustness Overhaul
 
 ### Major Features

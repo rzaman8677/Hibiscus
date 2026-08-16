@@ -24,6 +24,15 @@ The pipeline processes files in a structured, step-by-step flow:
 
 The filesystem watcher monitors your workspace root for any `Create`, `Modify`, or `Delete` events affecting `.md`, `.txt`, `.pdf`, and `.docx` files. These events are immediately forwarded to the knowledge queue.
 
+**Initial Scan on Open**: When a workspace is first opened, `watch_workspace` now triggers `initial_scan()` automatically in a background thread before processing live events. This means the knowledge base, graph, and topic map are populated immediately on open — previously the index stayed empty until the user manually edited each file, because the pipeline was purely event-driven with no bootstrapping step.
+
+During the scan, the watcher emits two Tauri events the frontend can listen for:
+
+- `knowledge-indexing` (payload: `bool`) — `true` when the scan starts, `false` when it finishes.
+- `knowledge-updated` — fired once after the scan completes to trigger a graph/search refetch.
+
+`useBackendKnowledge` subscribes to both events and exposes an `indexing` state flag you can wire to a loading indicator.
+
 ### 2. Debounced Queue
 
 To prevent redundant processing (e.g., rapid consecutive saves), events are debounced and deduplicated inside a queue. A batch is formed over a small time window and dispatched as a single unit to the worker pool.
@@ -35,12 +44,16 @@ An asynchronous Tokio-based worker pool processes the batched events. Concurrenc
 
 ### 4. Parser System
 
-A trait-based parser system extracts structured sections from the raw files:
+A trait-based parser system (`Parser` trait in `knowledge/parser.rs`) extracts structured sections from the raw files. Each parser handles exactly one file format and returns `ParseError` on failure; the worker pool logs the error, marks the file as skipped, and moves on without halting the pipeline.
 
-- **Markdown Parser**: Splits documents based on ATX-style headings (`#`, `##`), capturing the heading context for each section.
-- **Text Parser**: Splits plain text files intelligently based on paragraph breaks.
-- **PDF Parser**: Uses text extraction to strip plain text from PDFs, falling back to basic paragraph heuristics.
-- **DOCX Parser**: Employs streaming XML parsing of `word/document.xml` for highly efficient text retrieval without loading the entire DOM.
+- **Markdown Parser**: Splits documents on ATX-style headings (`#`, `##`, etc.) using byte-level checks — no regex. Content before the first heading goes into a section with `heading: None`. Guarantees at least one section per file.
+- **Text Parser**: Splits plain text on blank-line-separated paragraphs. Simple and allocation-efficient.
+- **PDF Parser**: Calls `pdf_extract::extract_text_by_pages()` to extract text **per page**, using the page number (`"Page 1"`, `"Page 2"`, …) as each section's heading. This is intentional: a search hit in a 300-page document is useless without page provenance. Raw PDF text contains layout artifacts — hard line-breaks mid-sentence and hyphenated word-splits (`"knowl-\nedge"`) — so `normalize_pdf_text()` runs a single pass to rejoin them before chunking, otherwise those tokens never match full words in the index.
+- **DOCX Parser**: Opens the file as a ZIP archive and streams `word/document.xml` through `quick-xml` in event mode, never loading the full DOM. `<w:p>` boundaries delimit paragraphs; `<w:pStyle>` attributes (`Heading1`, `Heading 2`, `Title`, `Subtitle`, and localized variants) mark section boundaries. Before this was implemented, every paragraph became a heading-less section and all Word content collapsed into the "General" topic — the document structure was completely invisible to the graph and topic grouping.
+
+#### Adding a New Parser
+
+Implement `Parser` (two methods: `supports(ext) -> bool` and `parse(path) -> Result<ParsedDocument, ParseError>`), then add it to the dispatch table at the bottom of `parser_for_path()`. The worker pool and chunker need no changes.
 
 ### 5. Chunker
 
@@ -52,7 +65,7 @@ The chunking engine splits the parsed sections into size-bounded chunks (typical
 
 ### 6. Incremental Indexer & Topic Extraction
 
-An inverted keyword index (`keyword -> [chunk_ids]`) is maintained. During processing, the indexer applies strict normalization:
+An inverted keyword index (`keyword -> [chunk_ids]`) is maintained. During processing, the indexer applies strict normalisation:
 
 - Keywords are lowercased and stripped of alphanumeric padding.
 - Common English stopwords are filtered out.
@@ -62,7 +75,7 @@ An inverted keyword index (`keyword -> [chunk_ids]`) is maintained. During proce
 After indexing, a lightweight TF-IDF score is precomputed for each keyword. This produces a `ScoredKeywordIndex` where `score = ln(1 + term_frequency) * ln(total_chunks / doc_frequency)`. This ensures that query-time ranking requires zero calculation.
 
 **Topic Grouping**: 
-In parallel, a lightweight heuristic topic grouping runs, clustering chunks into topics based on heading text overlap deterministically (without relying on ML or external clustering libraries).
+In parallel, a lightweight heuristic topic grouping runs, clustering chunks into topics based on heading text overlap deterministically (without relying on ML or external clustering libraries). Heading normalisation is **case-insensitive and title-cased**: `"introduction"` and `"Introduction"` and `"INTRODUCTION"` all resolve to the same topic `"Introduction"`. This matters especially for PDF extraction, where the same heading may appear in different capitalisation across pages.
 
 ### 7. Storage Layer
 
@@ -89,6 +102,10 @@ The frontend interacts with the knowledge system via robust Tauri commands (`sea
 **Caching**:
 A custom in-memory LRU cache stores recent query results and retrieved chunks. This guarantees instant responses while typing. The cache implements an all-or-nothing invalidation strategy, seamlessly flushing stale results anytime a source file changes.
 
+
+### Aggregate Rebuild Performance
+
+A subtle O(n²) trap existed in the initial scan: `rebuild_note_metadata()`, `rebuild_scored_index()`, and `build_topic_map()` were each called after every individual file, so scanning 1000 files meant 3000 full-index rebuilds. These are now consolidated into a single `rebuild_aggregates(workspace_root, changed_file)` call that is **deferred** during batch scans and executed exactly once at the end. For live file-change events (post-scan) the function runs immediately, scoped to the changed file where possible, so incremental updates stay cheap.
 
 ## Robustness Upgrade Notes
 
