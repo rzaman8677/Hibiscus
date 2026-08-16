@@ -220,6 +220,32 @@ impl Parser for TxtParser {
 /// `spawn_blocking` and large files are filtered at the queue level.
 pub struct PdfParser;
 
+/// Clean up text extracted from a PDF.
+///
+/// PDF extraction commonly emits hard line breaks mid-sentence (from the
+/// original layout) and hyphenated word splits at line ends. Left as-is these
+/// fragment the keyword index -- "knowl-\nedge" never matches "knowledge" --
+/// so we rejoin them before chunking.
+fn normalize_pdf_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut lines = raw.lines().map(str::trim).filter(|l| !l.is_empty()).peekable();
+
+    while let Some(line) = lines.next() {
+        if let Some(stripped) = line.strip_suffix('-') {
+            // Hyphenated split across lines: join without a space.
+            out.push_str(stripped);
+            continue;
+        }
+
+        out.push_str(line);
+        if lines.peek().is_some() {
+            out.push(' ');
+        }
+    }
+
+    out.trim().to_string()
+}
+
 impl Parser for PdfParser {
     fn supports(&self, ext: &str) -> bool {
         ext.eq_ignore_ascii_case("pdf")
@@ -241,22 +267,30 @@ impl Parser for PdfParser {
             });
         }
 
-        let text = pdf_extract::extract_text(path)
+        // Extract per page rather than as one flat blob. Page provenance is the
+        // only locator a PDF has -- without it, a search hit in a 300-page book
+        // gives the user no way to find the passage. The page number is carried
+        // as the section heading so it flows through chunking, search results
+        // and topic grouping unchanged.
+        let pages = pdf_extract::extract_text_by_pages(path)
             .map_err(|e| ParseError::IoError(format!("{}: PDF extraction failed: {}", path, e)))?;
 
         let mut sections: Vec<Section> = Vec::new();
 
-        // Split on double-newline boundaries (paragraph breaks in extracted text).
-        // PDF text extraction often produces erratic whitespace; we normalize
-        // aggressively by treating any sequence of 2+ newlines as a section break.
-        for paragraph in text.split("\n\n") {
-            let trimmed = paragraph.trim().to_string();
-            if !trimmed.is_empty() {
-                sections.push(Section {
-                    heading: None,
-                    content: trimmed,
-                    ..Default::default()
-                });
+        for (page_index, page_text) in pages.iter().enumerate() {
+            let page_label = format!("Page {}", page_index + 1);
+
+            // PDF text extraction produces erratic whitespace; treat any run of
+            // 2+ newlines as a paragraph break within the page.
+            for paragraph in page_text.split("\n\n") {
+                let trimmed = normalize_pdf_text(paragraph);
+                if !trimmed.is_empty() {
+                    sections.push(Section {
+                        heading: Some(page_label.clone()),
+                        content: trimmed,
+                        ..Default::default()
+                    });
+                }
             }
         }
 
@@ -295,6 +329,28 @@ impl Parser for PdfParser {
 /// FAILURE HANDLING: If the ZIP is corrupt or `word/document.xml` is missing,
 /// the parser returns `ParseError::IoError` and the pipeline skips the file.
 pub struct DocxParser;
+
+/// Read the `w:val` attribute off a `<w:pStyle>` element.
+fn style_value(e: &quick_xml::events::BytesStart) -> Option<String> {
+    e.attributes().flatten().find_map(|attr| {
+        if attr.key.local_name().as_ref() == b"val" {
+            String::from_utf8(attr.value.into_owned()).ok()
+        } else {
+            None
+        }
+    })
+}
+
+/// Whether a DOCX paragraph style denotes a heading.
+///
+/// Word emits `Heading1`..`Heading9` for the built-in outline levels, and
+/// localized builds sometimes use `heading 1` (with a space). `Title` and
+/// `Subtitle` are treated as headings too since they carry document structure.
+fn is_heading_style(style: Option<&str>) -> bool {
+    let Some(style) = style else { return false };
+    let normalized = style.replace([' ', '-', '_'], "").to_lowercase();
+    normalized.starts_with("heading") || normalized == "title" || normalized == "subtitle"
+}
 
 impl Parser for DocxParser {
     fn supports(&self, ext: &str) -> bool {
@@ -338,16 +394,51 @@ impl Parser for DocxParser {
         let mut in_text = false;
         let mut buf = Vec::with_capacity(1024);
 
-        // Streaming XML parse: we track <w:p> (paragraph) and <w:t> (text run)
-        // elements. Text from consecutive <w:t> elements within a <w:p> is
-        // concatenated into a single paragraph string.
+        // Heading tracking. A DOCX paragraph carries its style in
+        // <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>. Previously this was
+        // discarded and every paragraph became a heading-less section, so all
+        // DOCX content collapsed into the catch-all "General" topic and notes
+        // had no title. We now use styled paragraphs as section boundaries.
+        let mut current_style: Option<String> = None;
+        let mut current_heading: Option<String> = None;
+        let mut current_body = String::with_capacity(4096);
+
+        // Flush whatever has accumulated under the current heading.
+        fn flush(
+            sections: &mut Vec<Section>,
+            heading: &mut Option<String>,
+            body: &mut String,
+        ) {
+            let trimmed = body.trim().to_string();
+            if !trimmed.is_empty() || heading.is_some() {
+                sections.push(Section {
+                    heading: heading.take(),
+                    content: trimmed,
+                    ..Default::default()
+                });
+            }
+            body.clear();
+        }
+
+        // Streaming XML parse: we track <w:p> (paragraph), <w:pStyle> (style)
+        // and <w:t> (text run) elements. Text from consecutive <w:t> elements
+        // within a <w:p> is concatenated into a single paragraph string.
         loop {
             match reader.read_event_into(&mut buf) {
+                // <w:pStyle> is self-closing, so it arrives as an Empty event.
+                Ok(quick_xml::events::Event::Empty(ref e)) => {
+                    if e.local_name().as_ref() == b"pStyle" && in_paragraph {
+                        current_style = style_value(e);
+                    }
+                }
                 Ok(quick_xml::events::Event::Start(ref e)) => {
                     let local_name = e.local_name();
                     if local_name.as_ref() == b"p" {
                         in_paragraph = true;
                         current_paragraph.clear();
+                        current_style = None;
+                    } else if local_name.as_ref() == b"pStyle" && in_paragraph {
+                        current_style = style_value(e);
                     } else if local_name.as_ref() == b"t" && in_paragraph {
                         in_text = true;
                     }
@@ -366,13 +457,21 @@ impl Parser for DocxParser {
                     } else if local_name.as_ref() == b"p" {
                         in_paragraph = false;
                         let trimmed = current_paragraph.trim().to_string();
+
                         if !trimmed.is_empty() {
-                            sections.push(Section {
-                                heading: None,
-                                content: trimmed,
-                                ..Default::default()
-                            });
+                            if is_heading_style(current_style.as_deref()) {
+                                // Styled heading: close the previous section and
+                                // start a new one titled with this paragraph.
+                                flush(&mut sections, &mut current_heading, &mut current_body);
+                                current_heading = Some(trimmed);
+                            } else {
+                                if !current_body.is_empty() {
+                                    current_body.push_str("\n\n");
+                                }
+                                current_body.push_str(&trimmed);
+                            }
                         }
+                        current_style = None;
                     }
                 }
                 Ok(quick_xml::events::Event::Eof) => break,
@@ -385,6 +484,9 @@ impl Parser for DocxParser {
             }
             buf.clear();
         }
+
+        // Flush the trailing section.
+        flush(&mut sections, &mut current_heading, &mut current_body);
 
         if sections.is_empty() {
             sections.push(Section {
@@ -431,5 +533,70 @@ pub fn parser_for_path(path: &str) -> Option<Box<dyn Parser>> {
         Some(Box::new(DocxParser))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heading_styles_are_recognized() {
+        assert!(is_heading_style(Some("Heading1")));
+        assert!(is_heading_style(Some("Heading9")));
+        // Localized / spaced variants Word also emits.
+        assert!(is_heading_style(Some("heading 2")));
+        assert!(is_heading_style(Some("Heading-3")));
+        assert!(is_heading_style(Some("Title")));
+        assert!(is_heading_style(Some("Subtitle")));
+    }
+
+    #[test]
+    fn body_styles_are_not_headings() {
+        assert!(!is_heading_style(None));
+        assert!(!is_heading_style(Some("Normal")));
+        assert!(!is_heading_style(Some("BodyText")));
+        assert!(!is_heading_style(Some("ListParagraph")));
+    }
+
+    #[test]
+    fn pdf_text_rejoins_layout_line_breaks() {
+        // Hard wraps from the original page layout must not survive into the
+        // index, or phrase search never matches across them.
+        let raw = "the quick brown\nfox jumps over\nthe lazy dog";
+        assert_eq!(
+            normalize_pdf_text(raw),
+            "the quick brown fox jumps over the lazy dog"
+        );
+    }
+
+    #[test]
+    fn pdf_text_rejoins_hyphenated_words() {
+        // "knowl-\nedge" must become "knowledge", not "knowl- edge".
+        let raw = "this is knowl-\nedge extrac-\ntion";
+        assert_eq!(normalize_pdf_text(raw), "this is knowledge extraction");
+    }
+
+    #[test]
+    fn pdf_text_drops_blank_lines_and_trims() {
+        assert_eq!(normalize_pdf_text("  alpha  \n\n   \n beta "), "alpha beta");
+        assert_eq!(normalize_pdf_text("   "), "");
+    }
+
+    #[test]
+    fn markdown_parser_splits_on_headings() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "intro text\n\n# First\nalpha\n\n## Second\nbeta").unwrap();
+
+        let path = file.path().to_string_lossy().to_string();
+        let doc = MarkdownParser.parse(&path).unwrap();
+
+        let headings: Vec<Option<String>> =
+            doc.sections.iter().map(|s| s.heading.clone()).collect();
+        assert_eq!(
+            headings,
+            vec![None, Some("First".to_string()), Some("Second".to_string())]
+        );
     }
 }
