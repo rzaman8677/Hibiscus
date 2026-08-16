@@ -49,11 +49,39 @@ The **FileRenderer** component handles different file types:
 
 | Type | Extension | Rendering Mode |
 |------|-----------|----------------|
-| Markdown | `.md`, `.markdown` | Editor + Preview |
-| Text | `.txt` | Editor only |
-| Code | `.js`, `.py`, `.rs`, etc. | Editor with syntax highlight |
-| PDF | `.pdf` | Native viewer (planned) |
-| Images | `.png`, `.jpg`, etc. | Image preview (planned) |
+| Markdown | `.md`, `.markdown` | Editor + Live preview |
+| Text | `.txt` | Editor with syntax highlight |
+| Code | `.js`, `.ts`, `.py`, `.rs`, etc. | Editor with syntax highlight |
+| PDF | `.pdf` | Paginated viewer (all pages) |
+| DOCX | `.docx` | Styled document viewer |
+| Images | `.png`, `.jpg`, `.gif`, `.svg`, etc. | Native image preview |
+
+#### Binary Document Viewers (PDF & DOCX)
+
+PDF and DOCX files are **read-only** in Hibiscus — they open in a dedicated viewer rather than Monaco. A toolbar above each viewer shows a **"Read-only"** badge and an **"Extract to Note"** button.
+
+**PDF viewer:**
+- Renders all pages in a vertical scroll, each in its own framed canvas.
+- Sized to the actual container width via `ResizeObserver` (previously used `window.innerWidth`, which broke in narrower layouts).
+- Reloads automatically when the file changes on disk.
+- Page labels (`Page 1`, `Page 2`, …) match the section headings used in the knowledge index, so search results and viewer stay in sync.
+
+**DOCX viewer:**
+- Converts the document to HTML using `mammoth.js` in the frontend.
+- The raw mammoth output is sanitised through `DOMParser` before rendering: `<script>` tags, `on*` event attributes, and `javascript:` / `data:text/html` URIs are stripped. No external sanitiser library required.
+- Styled as a page-column layout (`max-width: 72ch`) via `FileRenderer.css` CSS variables — fully themed with the rest of the app.
+- Cache invalidated on `fs-changed` events: if you edit the file in Word and save, reopening or switching back to the tab shows the updated content.
+
+#### Why binary files are read-only
+
+Monaco is kept mounted and hidden at all times (it must never unmount, to avoid the persistent corruption bug). This means it is bound to whatever buffer is in memory for the active file, including the empty placeholder for PDFs and DOCX files. Multiple code paths in `useEditorController` could previously reach `write_text_file` with that empty buffer — silently zeroing the document:
+
+- Auto-save (1 s debounce after any `onChange` event, even from Monaco while hidden)
+- "Save As" (wrote the buffer instead of copying bytes)
+- Unmount handler (flushed all dirty buffers)
+- Session restore (reloaded all paths as text, discarding the binary file's tab)
+
+Every one of these paths now checks `isBinaryFile(path)` and bails out early. `copy_file` is used for binary Save As. Regression tests in `tests/binaryFileSafety.test.ts` cover all failure modes.
 
 ### Markdown Preview
 
@@ -70,6 +98,19 @@ Toggle markdown preview with `Ctrl+Shift+V`:
 - Scroll sync (editor ↔ preview) (planned)
 - Export to HTML (planned)
 - Print-friendly styling
+
+#### Extract to Note
+
+The **"Extract to Note"** button in the document toolbar triggers the `extract_document_to_note` Tauri command. It runs the full knowledge parser (same one the indexer uses) and writes a structured Markdown file alongside the original document:
+
+```
+document.pdf         →   document-note.md   (or document-note-2.md if that exists)
+research.docx        →   research-note.md
+```
+
+The resulting note has YAML frontmatter recording the source path, and the body preserves the heading structure extracted from the document (page numbers for PDFs, Word heading styles for DOCX). The indexer picks it up immediately as a regular note, making it searchable, linkable, and visible in the graph. This is the recommended path if you need to add wiki-links or annotations to a PDF or DOCX — edit the note, not the original.
+
+---
 
 ### File Loading States
 
