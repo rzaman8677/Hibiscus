@@ -4,12 +4,23 @@ This document details the technical architecture of Hibiscus's knowledge graph s
 
 ## System Overview
 
-The knowledge graph system is a client-side React-based implementation that provides:
+The knowledge graph system has two cooperating layers:
 
-- Real-time wiki-link parsing and indexing
-- Incremental graph updates
-- Force-directed visualization
-- Backlink tracking
+**Backend (canonical source of truth)**: The Rust pipeline indexes all files — Markdown, plain text, PDF, and DOCX — into a persisted, content-addressable chunk store. Graph nodes and backlink maps are derived from this store and surfaced via `get_knowledge_graph` and `get_backlinks` Tauri commands. This data survives restarts and reflects the full workspace including binary document content.
+
+**Frontend (live in-editor layer)**: `useKnowledgeIndex` continues to provide real-time wiki-link and tag parsing for the active buffer while the user types, driving live backlink counts before a file is saved. It is intentionally scoped to Markdown and should not be used as the graph or backlinks data source.
+
+`useBackendKnowledge` is the correct hook for any component that consumes the graph or backlinks. It replaces a previous 5-second polling interval with reactive `fs-changed` / `knowledge-updated` event listeners, meaning the graph updates within ~600ms of a file save rather than on a fixed schedule.
+
+### What each layer owns
+
+| Concern | Layer |
+|---|---|
+| Graph visualization data | Backend (`get_knowledge_graph`) |
+| Backlinks panel data | Backend (`get_backlinks`) |
+| Search results | Backend (`search_chunks`) |
+| Live wiki-link highlighting in editor | Frontend (`useKnowledgeIndex`) |
+| PDF / DOCX content in graph | Backend only |
 
 ## Core Components
 
@@ -68,24 +79,38 @@ interface GraphData {
 
 ### 3. Graph Visualization (`KnowledgeGraphView`)
 
-Full-screen force-directed graph component using react-force-graph-2d.
+Full-screen force-directed graph component using `react-force-graph-2d`. Canvas-rendered via D3 with custom `nodeCanvasObject` for all node drawing.
 
-#### Rendering Pipeline
+#### Node Visual Encoding
 
-```typescript
-// Node sizing based on degree
-const getNodeRadius = (node: FGNode) => {
-  const t = node.degree / maxDegree
-  return MIN_NODE_RADIUS + t * (MAX_NODE_RADIUS - MIN_NODE_RADIUS)
-}
-```
+Nodes encode file type through **both colour and shape** so they remain distinguishable in colour-blind contexts and at small sizes.
 
-#### Visual Features
+| File type | Colour | Shape |
+|---|---|---|
+| Markdown | Blue (`#7aa2f7`) | Circle |
+| PDF | Red (`#f7768e`) | Diamond |
+| DOCX / Word | Green (`#9ece6a`) | Square |
+| Plain text | Yellow (`#e0af68`) | Triangle |
+| Other | Muted (`#565f89`) | Hexagon |
 
-- **Canvas Rendering**: Hardware-accelerated performance
-- **Theme Integration**: CSS variable-driven colors
-- **Responsive Design**: ResizeObserver-based layout
-- **Interactive Controls**: Zoom, pan, node dragging
+High-degree "hub" nodes render with an additional ring at 130% radius. Orphan nodes (zero connections) render hollow to visually distinguish them from connected nodes. Hovered edges turn amber (`#f5a623`).
+
+#### Drag Behaviour Fix
+
+A previous bug caused the simulation to explode when a node was dragged — all non-dragged nodes would zoom out and leave the viewport. This was fixed by:
+1. Setting `alphaTarget(0.3)` on drag start (prevents the simulation from cooling) and resetting to `0` on release.
+2. Capping `d3ManyBodyStrength` and constraining forces so the simulation energy stays bounded.
+3. Tracking a `isDraggingRef` flag to suppress camera re-centering while a drag is active.
+
+#### Fit / Relayout
+
+Two toolbar buttons in the graph header:
+- **Fit** — calls `zoomToFit()` with a guard for `prefers-reduced-motion` (skips animation if the user has it enabled).
+- **Relayout** — reheats the simulation (`alpha(1)`) to re-run the force layout from the current positions, useful when nodes have drifted after a large graph update.
+
+#### Legend
+
+A collapsible legend panel (bottom-left) lists each file-type category with its matching colour swatch and shape glyph rendered as inline SVG. The legend collapses to a single toggle button to free viewport space on small screens.
 
 #### Physics Configuration
 
@@ -93,6 +118,7 @@ const getNodeRadius = (node: FGNode) => {
 {
   d3AlphaDecay: 0.02,
   d3VelocityDecay: 0.3,
+  d3ManyBodyStrength: -120,  // bounded to prevent explosion
   warmupTicks: 50,
   cooldownTicks: 200
 }
@@ -100,14 +126,16 @@ const getNodeRadius = (node: FGNode) => {
 
 ### 4. Backlinks Panel (`BacklinksPanel`)
 
-Displays incoming links to the current note.
+Displays incoming links to the current file.
 
 #### Data Flow
 
-1. **Current Path**: Monitors active file
-2. **Backlink Lookup**: Retrieves from `index.backlinks`
-3. **UI Rendering**: Lists clickable backlink sources
-4. **Navigation**: Opens source notes on click
+1. **Current Path**: Receives the active file path as a prop.
+2. **Backlink Lookup**: Receives a pre-resolved `string[]` of source paths — the component no longer touches `KnowledgeIndex` directly. The resolved list comes from `useBackendKnowledge().backlinks[activePath]`.
+3. **UI Rendering**: Lists clickable backlink sources with filename display.
+4. **Navigation**: Calls `onOpenFile` to open the source note on click.
+
+This consolidation means there is one place (`App.tsx` via `useBackendKnowledge`) that owns backlink resolution, rather than two competing sources.
 
 ## Data Flow Architecture
 
@@ -188,11 +216,12 @@ const colors = useMemo(() => {
 
 ```
 src/features/knowledge/
-├── KnowledgeGraphView.tsx    # Main graph component
-├── buildGraph.ts             # Graph data builder
-├── useKnowledgeIndex.ts      # Core indexing hook
-├── BacklinksPanel.tsx        # Backlinks UI
-├── KnowledgeGraph.css        # Graph-specific styles
+├── KnowledgeGraphView.tsx    # Main graph component (canvas, legend, toolbar)
+├── KnowledgeGraph.css        # Graph-specific styles + legend
+├── buildGraph.ts             # Graph data builder (GraphData type)
+├── useKnowledgeIndex.ts      # Frontend-only live indexing (editor use only)
+├── useBackendKnowledge.ts    # Canonical backend graph + backlinks hook
+├── BacklinksPanel.tsx        # Backlinks UI (receives resolved string[])
 └── BacklinksPanel.css        # Backlinks styles
 ```
 
@@ -310,10 +339,9 @@ const updateNote = useCallback((path: string, content: string) => {
 
 ### Planned Enhancements
 
-- **File Type Support**: PDF, DOCX integration
 - **Advanced Layout**: Hierarchical and clustering layouts
-- **Link Types**: Differentiated link relationships
-- **Graph Analytics**: Connection metrics and insights
+- **Link Types**: Differentiated link relationships (citation vs. reference vs. embed)
+- **Graph Analytics**: Connection metrics and insights (PageRank, community detection)
 
 ### Architecture Preparedness
 
