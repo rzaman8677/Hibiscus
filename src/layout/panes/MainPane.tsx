@@ -111,6 +111,14 @@ export function MainPane(props: MainPaneProps) {
                 onCursorChange={props.setCursorPosition}
                 onSave={props.saveCurrentFile}
                 markdownViewMode={props.markdownViewMode}
+                onOpenFile={(filePath) =>
+                  props.handleFileOpen({
+                    id: filePath,
+                    name: filePath.split(/[/\\]/).pop() || filePath,
+                    path: filePath,
+                    type: "file",
+                  })
+                }
               />
             </div>
           </>
