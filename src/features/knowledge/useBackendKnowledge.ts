@@ -29,6 +29,8 @@ export interface BackendKnowledge {
   loading: boolean
   /** Error message if the backend graph could not be loaded, else null. */
   error: string | null
+  /** True while the backend is performing a full workspace scan. */
+  indexing: boolean
   /** Manually trigger a refetch. */
   refresh: () => void
 }
@@ -41,6 +43,7 @@ export function useBackendKnowledge(workspaceRoot: string | null): BackendKnowle
   const [backlinks, setBacklinks] = useState<BacklinkMap | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [indexing, setIndexing] = useState(false)
 
   const cancelledRef = useRef(false)
 
@@ -78,26 +81,47 @@ export function useBackendKnowledge(workspaceRoot: string | null): BackendKnowle
     // Refresh when the filesystem watcher reports changes (debounced), so the
     // graph tracks edits without a wasteful fixed-interval poll.
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
-    let unlisten: (() => void) | null = null
+    const unlisteners: (() => void)[] = []
 
-    listen("fs-changed", () => {
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => {
-        // Backend indexing is itself debounced (~750ms); wait a beat so the
-        // freshly re-indexed graph is on disk before we refetch.
+    const track = (p: Promise<() => void>) => {
+      p.then((fn) => {
+        if (cancelledRef.current) fn()
+        else unlisteners.push(fn)
+      })
+    }
+
+    track(
+      listen("fs-changed", () => {
+        if (debounceTimer) clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+          // Backend indexing is itself debounced (~750ms); wait a beat so the
+          // freshly re-indexed graph is on disk before we refetch.
+          load()
+        }, REFRESH_DEBOUNCE_MS)
+      })
+    )
+
+    // The backend scans the whole workspace when it is opened. Surface that as
+    // an indexing state and refetch when it finishes, so the graph fills in on
+    // first open instead of staying empty until the user edits something.
+    track(
+      listen<boolean>("knowledge-indexing", (event) => {
+        if (!cancelledRef.current) setIndexing(event.payload === true)
+      })
+    )
+
+    track(
+      listen("knowledge-updated", () => {
         load()
-      }, REFRESH_DEBOUNCE_MS)
-    }).then((fn) => {
-      if (cancelledRef.current) fn()
-      else unlisten = fn
-    })
+      })
+    )
 
     return () => {
       cancelledRef.current = true
       if (debounceTimer) clearTimeout(debounceTimer)
-      if (unlisten) unlisten()
+      for (const fn of unlisteners) fn()
     }
   }, [workspaceRoot, load])
 
-  return { graph, backlinks, loading, error, refresh: load }
+  return { graph, backlinks, loading, error, indexing, refresh: load }
 }
