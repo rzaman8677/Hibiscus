@@ -124,19 +124,43 @@ pub fn watch_workspace(
     let knowledge_sender = knowledge_state.sender.clone();
 
     // Set the workspace root for the knowledge system so the processing
-    // pipeline knows where to read/write index data.
+    // pipeline knows where to read/write index data, then index everything
+    // already present in the workspace.
+    //
+    // Previously only the workspace root was set here. Because the indexing
+    // pipeline is purely event-driven, that meant a freshly opened workspace
+    // stayed invisible to search/graph/topics until the user happened to edit
+    // each file. The initial scan is hash-incremental, so re-opening a
+    // workspace that is already indexed is cheap.
     {
         let ws_root = path.clone();
         let ks = (*knowledge_state).clone();
-        // Fire-and-forget: set workspace root asynchronously.
-        // We use a dedicated Tokio runtime since we are in a sync context.
+        let scan_window = window.clone();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build();
-            if let Ok(rt) = rt {
-                rt.block_on(ks.set_workspace_root(ws_root));
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("[Knowledge] Could not start runtime for initial scan: {}", e);
+                    return;
+                }
+            };
+
+            rt.block_on(ks.set_workspace_root(ws_root.clone()));
+            rt.block_on(ks.set_status_state("Indexing"));
+            let _ = scan_window.emit("knowledge-indexing", true);
+
+            match crate::knowledge::queue::initial_scan(&ws_root) {
+                Ok(count) => println!("[Knowledge] Initial scan indexed {} file(s)", count),
+                Err(e) => eprintln!("[Knowledge] Initial scan failed: {}", e),
             }
+
+            rt.block_on(ks.set_status_state("Ready"));
+            let _ = scan_window.emit("knowledge-indexing", false);
+            // Tell the frontend the graph/backlinks/topics are worth re-fetching.
+            let _ = scan_window.emit("knowledge-updated", ());
         });
     }
     // Stop any existing watcher
