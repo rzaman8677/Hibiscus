@@ -79,6 +79,26 @@
   white-space: nowrap;
 }
 
+/* Right-aligned header controls (Fit / Relayout / Reset View + stats) */
+.graph-view-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Collapse the least-critical control text on narrow panes so the header
+   never wraps or clips. */
+@media (max-width: 720px) {
+  .graph-view-actions .graph-view-back span {
+    display: none;
+  }
+
+  .graph-view-stats {
+    display: none;
+  }
+}
+
 /* =============================================================================
  * CANVAS — ForceGraph2D container, fills remaining space
  * ============================================================================= */
@@ -148,6 +168,120 @@
   .graph-view-spinner {
     animation-duration: 1.6s;
   }
+}
+
+/* =============================================================================
+ * LEGEND — floating overlay explaining node color + size
+ * ============================================================================= */
+
+.graph-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 8px 10px;
+  background: var(--panel-bg, #131720);
+  background: color-mix(in srgb, var(--panel-bg, #131720) 88%, transparent);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 8px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-family: var(--font-ui);
+  user-select: none;
+}
+
+.graph-legend-collapsed {
+  padding: 4px;
+}
+
+.graph-legend-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--text-muted, #8b92a8);
+  font-size: var(--text-xs, 11px);
+  font-weight: var(--font-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: color var(--transition-fast, 0.1s);
+}
+
+.graph-legend-toggle:hover {
+  color: var(--text, #e6e6eb);
+}
+
+.graph-legend-toggle svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.graph-legend-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph-legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.graph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs, 11px);
+  color: var(--text-muted, #8b92a8);
+}
+
+.graph-legend-glyph {
+  flex-shrink: 0;
+  display: block;
+}
+
+.graph-legend-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  font-size: var(--text-xs, 11px);
+  color: var(--text-subtle, #5c6370);
+}
+
+.graph-legend-sizes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.graph-legend-dot {
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--text-subtle, #5c6370);
+}
+
+.graph-legend-dot-sm {
+  width: 5px;
+  height: 5px;
+}
+
+.graph-legend-dot-lg {
+  width: 11px;
+  height: 11px;
 }
 
 /* =============================================================================

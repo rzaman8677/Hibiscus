@@ -7,19 +7,24 @@
  *
  * FEATURES:
  * - Force-directed layout via react-force-graph-2d (ForceGraph2D)
+ * - Categorical node colors by file type (md/pdf/docx/txt/other) + legend
+ * - Node size encodes degree (connection count); orphans are muted
+ * - Neutral edges with an amber highlighted path for the focused node
  * - Node visual system: default, hovered, active, neighbor, dimmed states
  * - Smart label system with zoom-based filtering and background pills
  * - Interaction system: hover highlighting, click-to-focus, smooth camera motion
- * - Zoom-based filtering: hide labels/edges at low zoom
  * - Focus mode: show only active node + neighbors
- * - Edge styling: highlight relevant connections
- * - Smooth camera centering with easing
+ * - Respects prefers-reduced-motion (no camera easing / physics warmup)
+ *
+ * ACCESSIBILITY:
+ * - Color is never the sole signal: the legend pairs every color with a label,
+ *   tooltips name the file type, and the backlinks/search panels act as the
+ *   list-based alternative to the (inherently visual) graph.
  *
  * PERFORMANCE:
- * - Graph data is memoized by caller via index.version
  * - Canvas-based rendering (no DOM per node)
  * - Optimized neighbor lookups via adjacency map
- * - No expensive shadow blur per frame
+ * - Halos are filled discs, not shadow-blur, to stay cheap per frame
  * ============================================================================
  */
 
@@ -49,6 +54,7 @@ interface FGNode extends GraphNode {
   x?: number
   y?: number
   degree: number
+  category: FileCategory
   vx?: number
   vy?: number
   fx?: number
@@ -69,9 +75,9 @@ type NodeState = "default" | "hovered" | "active" | "neighbor" | "dimmed"
 const MIN_NODE_RADIUS = 4
 const MAX_NODE_RADIUS = 16
 const HOVER_SCALE = 1.2
-const ACTIVE_SCALE = 1.25
-const NEIGHBOR_SCALE = 1.05
-const DIMMED_OPACITY = 0.15
+const ACTIVE_SCALE = 1.3
+const NEIGHBOR_SCALE = 1.08
+const DIMMED_OPACITY = 0.18
 const LABEL_MIN_ZOOM = 0.4
 const LABEL_FADE_START = 0.4
 const LABEL_FADE_END = 0.6
@@ -80,12 +86,68 @@ const EDGE_FADE_END = 0.4
 const CAMERA_ANIMATION_DURATION = 800
 const FONT_FAMILY = "Inter, system-ui, -apple-system, sans-serif"
 
+// Amber path-highlight color for the focused node's edges (data-viz convention:
+// a warm accent that reads as "the path you're looking at" against cool nodes).
+const HIGHLIGHT_EDGE = "#f5a623"
+
+// Categorical node colors keyed by file type. This is the one genuinely
+// meaningful categorical dimension in the graph, so nodes are colored by it
+// (a legend explains the mapping — never color alone). Mid-tone hues chosen to
+// stay legible on both light and dark editor backgrounds.
+type FileCategory = "md" | "pdf" | "docx" | "txt" | "other"
+
+const CATEGORY_COLORS: Record<FileCategory, string> = {
+  md: "#4c8bf5", // notes — blue (the dominant type)
+  pdf: "#e0556b", // pdf — rose
+  docx: "#2aa9c9", // docx — cyan
+  txt: "#6faf4f", // txt — green
+  other: "#8891a8", // anything else — slate
+}
+
+const CATEGORY_LABELS: Record<FileCategory, string> = {
+  md: "Markdown",
+  pdf: "PDF",
+  docx: "Word",
+  txt: "Text",
+  other: "Other",
+}
+
+// Shape encodes file type alongside color, so the categories stay separable
+// without relying on hue (colorblind users, low-contrast displays, dense
+// clusters where small color differences wash out).
+type NodeShape = "circle" | "square" | "diamond" | "triangle" | "hexagon"
+
+const CATEGORY_SHAPES: Record<FileCategory, NodeShape> = {
+  md: "circle",
+  pdf: "square",
+  docx: "diamond",
+  txt: "triangle",
+  other: "hexagon",
+}
+
+/** Degree at/above which a node is treated as a "hub" and gets an outer ring. */
+const HUB_DEGREE_RATIO = 0.6
+
 // Easing function: easeOutCubic
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3)
+
+// True when the user has asked the OS to minimize motion.
+const prefersReducedMotion = (): boolean =>
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 
 // =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
+
+function fileCategory(path: string): FileCategory {
+  const lower = path.toLowerCase()
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "md"
+  if (lower.endsWith(".pdf")) return "pdf"
+  if (lower.endsWith(".docx")) return "docx"
+  if (lower.endsWith(".txt")) return "txt"
+  return "other"
+}
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
@@ -102,6 +164,113 @@ function withAlpha(hex: string, alpha: number): string {
   const rgb = hexToRgb(hex)
   if (!rgb) return hex
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`
+}
+
+/** Lighten a hex color toward white by `amount` (0..1). Used for hover/active glow. */
+function lighten(hex: string, amount: number): string {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return hex
+  const r = Math.round(rgb.r + (255 - rgb.r) * amount)
+  const g = Math.round(rgb.g + (255 - rgb.g) * amount)
+  const b = Math.round(rgb.b + (255 - rgb.b) * amount)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+/**
+ * Trace a node shape onto the canvas path (does not fill or stroke).
+ * Shapes are size-compensated so they read as roughly equal visual weight
+ * at the same nominal radius.
+ */
+function traceShape(
+  ctx: CanvasRenderingContext2D,
+  shape: NodeShape,
+  x: number,
+  y: number,
+  r: number
+): void {
+  ctx.beginPath()
+  switch (shape) {
+    case "circle":
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      break
+    case "square": {
+      const s = r * 0.86
+      ctx.roundRect(x - s, y - s, s * 2, s * 2, Math.max(1, r * 0.3))
+      break
+    }
+    case "diamond": {
+      const d = r * 1.2
+      ctx.moveTo(x, y - d)
+      ctx.lineTo(x + d, y)
+      ctx.lineTo(x, y + d)
+      ctx.lineTo(x - d, y)
+      ctx.closePath()
+      break
+    }
+    case "triangle": {
+      const t = r * 1.22
+      ctx.moveTo(x, y - t)
+      ctx.lineTo(x + t * 0.866, y + t * 0.55)
+      ctx.lineTo(x - t * 0.866, y + t * 0.55)
+      ctx.closePath()
+      break
+    }
+    case "hexagon": {
+      const h = r * 1.06
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 2
+        const px = x + h * Math.cos(angle)
+        const py = y + h * Math.sin(angle)
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
+      ctx.closePath()
+      break
+    }
+  }
+}
+
+// =============================================================================
+// LEGEND GLYPH
+// =============================================================================
+
+/** Miniature of a node shape, so the legend matches what's drawn on canvas. */
+function LegendGlyph({
+  shape,
+  color,
+  hollow = false,
+}: {
+  shape: NodeShape
+  color: string
+  hollow?: boolean
+}) {
+  const fill = hollow ? "none" : color
+  const stroke = color
+  const strokeWidth = hollow ? 1.4 : 0.8
+  const dash = hollow ? "2.2 1.8" : undefined
+
+  const shapeProps = {
+    fill,
+    stroke,
+    strokeWidth,
+    strokeDasharray: dash,
+  }
+
+  return (
+    <svg
+      className="graph-legend-glyph"
+      width="13"
+      height="13"
+      viewBox="0 0 14 14"
+      aria-hidden="true"
+    >
+      {shape === "circle" && <circle cx="7" cy="7" r="4.6" {...shapeProps} />}
+      {shape === "square" && <rect x="2.6" y="2.6" width="8.8" height="8.8" rx="2" {...shapeProps} />}
+      {shape === "diamond" && <polygon points="7,1.6 12.4,7 7,12.4 1.6,7" {...shapeProps} />}
+      {shape === "triangle" && <polygon points="7,1.8 12.4,11.2 1.6,11.2" {...shapeProps} />}
+      {shape === "hexagon" && <polygon points="7,1.6 11.7,4.3 11.7,9.7 7,12.4 2.3,9.7 2.3,4.3" {...shapeProps} />}
+    </svg>
+  )
 }
 
 // =============================================================================
@@ -124,6 +293,9 @@ export function KnowledgeGraphView({
   const [focusMode, setFocusMode] = useState(false)
   const [globalScale, setGlobalScale] = useState(1)
   const animationRef = useRef<number | null>(null)
+  // True while the user is dragging a node — suppresses the auto zoom-to-fit
+  // so the camera can't yank out from under them mid-drag.
+  const isDraggingRef = useRef(false)
 
   // Active theme name — used to re-read CSS-variable colors when the theme
   // changes while the graph is mounted (fixes stale colors after a switch).
@@ -169,6 +341,7 @@ export function KnowledgeGraphView({
     const nodes: FGNode[] = graph.nodes.map((n) => ({
       ...n,
       degree: degreeMap.get(n.id) || 0,
+      category: fileCategory(n.id),
     }))
 
     const links: FGLink[] = graph.edges.map((e) => ({
@@ -178,6 +351,16 @@ export function KnowledgeGraphView({
 
     return { nodes, links }
   }, [graph, degreeMap])
+
+  // Which file categories actually appear, in a stable order, for the legend.
+  const presentCategories = useMemo(() => {
+    const order: FileCategory[] = ["md", "pdf", "docx", "txt", "other"]
+    const present = new Set(fgData.nodes.map((n) => n.category))
+    return order.filter((c) => present.has(c))
+  }, [fgData])
+
+  // Legend visibility (collapsible so it never fights the graph on small panes).
+  const [showLegend, setShowLegend] = useState(true)
 
   // Node radius based on degree
   const getNodeRadius = useCallback(
@@ -275,6 +458,9 @@ export function KnowledgeGraphView({
       panelBg: style.getPropertyValue("--panel-bg").trim() || "#131720",
       panelBgHover: style.getPropertyValue("--panel-bg-hover").trim() || "#1a1f2e",
       accentSoft: style.getPropertyValue("--accent-soft").trim() || "rgba(122, 162, 247, 0.15)",
+      // Neutral edge color (blue-gray) — data-viz convention for "connective
+      // tissue" that shouldn't compete with the categorical node colors.
+      edge: style.getPropertyValue("--text-subtle").trim() || "#5c6370",
     }
     // Re-read on data change or when the active theme changes so colors stay
     // in sync with a live theme switch, not just when graph data updates.
@@ -322,6 +508,13 @@ export function KnowledgeGraphView({
       // Cancel any existing animation
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current)
+      }
+
+      // Respect reduced-motion: jump straight to the target instead of easing.
+      if (prefersReducedMotion()) {
+        const z = Math.max(1.5, fgRef.current.getTransform?.().k ?? 1.5)
+        fgRef.current.centerAt(node.x, node.y, z)
+        return
       }
 
       const startTime = performance.now()
@@ -388,6 +581,34 @@ export function KnowledgeGraphView({
     setFocusMode(false)
   }, [])
 
+  // Drag lifecycle. Dragging reheats the d3 simulation; without pinning, the
+  // released node springs back and the whole cloud keeps drifting afterwards.
+  const handleNodeDrag = useCallback(() => {
+    isDraggingRef.current = true
+  }, [])
+
+  const handleNodeDragEnd = useCallback((node: any) => {
+    isDraggingRef.current = false
+    // Pin the node where it was dropped so the user's arrangement sticks.
+    node.fx = node.x
+    node.fy = node.y
+  }, [])
+
+  // Fit the whole graph back into view (also the manual recovery button).
+  const fitToView = useCallback(() => {
+    fgRef.current?.zoomToFit(prefersReducedMotion() ? 0 : 400, 60)
+  }, [])
+
+  // Release all pinned positions and let the layout re-settle from scratch.
+  const relayout = useCallback(() => {
+    for (const node of fgData.nodes as any[]) {
+      node.fx = undefined
+      node.fy = undefined
+    }
+    fgRef.current?.d3ReheatSimulation?.()
+    setTimeout(fitToView, 600)
+  }, [fgData, fitToView])
+
   // Handle zoom change
   const handleZoom = useCallback((transform: any) => {
     setGlobalScale(transform.k)
@@ -412,27 +633,40 @@ export function KnowledgeGraphView({
       const x = node.x ?? 0
       const y = node.y ?? 0
 
-      // Determine visual properties based on state
-      let fillColor = colors.accent
-      let strokeColor = withAlpha(colors.accent, 0.5)
-      let strokeWidth = 0.8
+      // Color AND shape both encode the file-type category, so nodes stay
+      // separable without relying on hue alone.
+      const categoryColor = CATEGORY_COLORS[fgNode.category]
+      const shape = CATEGORY_SHAPES[fgNode.category]
+
+      // Structural roles: hubs (most-linked) get an outer ring, orphans
+      // (nothing links to or from them) are drawn hollow with a dashed contour.
+      const isOrphan = fgNode.degree === 0
+      const isHub = maxDegree > 2 && fgNode.degree >= maxDegree * HUB_DEGREE_RATIO
+      const drawHollow = isOrphan && (state === "default" || state === "neighbor")
+
+      let fillColor = categoryColor
+      let strokeColor = withAlpha(categoryColor, 0.5)
+      let strokeWidth = 0.9
       let opacity = 1
+      let haloColor: string | null = null
 
       switch (state) {
         case "active":
-          fillColor = colors.accentSecondary
-          strokeColor = colors.accentSecondary
-          strokeWidth = 2.5
+          fillColor = lighten(categoryColor, 0.14)
+          strokeColor = colors.text
+          strokeWidth = 2.2
+          haloColor = withAlpha(categoryColor, 0.3)
           break
         case "hovered":
-          fillColor = colors.accent
+          fillColor = lighten(categoryColor, 0.18)
           strokeColor = colors.text
-          strokeWidth = 1.5
+          strokeWidth = 1.6
+          haloColor = withAlpha(categoryColor, 0.22)
           break
         case "neighbor":
-          fillColor = colors.accent
-          strokeColor = withAlpha(colors.accentSecondary, 0.7)
-          strokeWidth = 1
+          fillColor = categoryColor
+          strokeColor = withAlpha(colors.text, 0.6)
+          strokeWidth = 1.2
           break
         case "dimmed":
           opacity = DIMMED_OPACITY
@@ -443,16 +677,39 @@ export function KnowledgeGraphView({
 
       ctx.globalAlpha = opacity
 
-      // Node circle
-      ctx.beginPath()
-      ctx.arc(x, y, radius, 0, Math.PI * 2)
-      ctx.fillStyle = fillColor
-      ctx.fill()
+      // Soft halo behind hovered/active nodes (a filled shape, not a shadow-blur,
+      // so it stays cheap per frame).
+      if (haloColor) {
+        traceShape(ctx, shape, x, y, radius + 6)
+        ctx.fillStyle = haloColor
+        ctx.fill()
+      }
 
-      // Border ring
-      ctx.strokeStyle = strokeColor
-      ctx.lineWidth = strokeWidth
-      ctx.stroke()
+      // Hub ring — marks the most connected notes in the workspace.
+      if (isHub && state !== "dimmed") {
+        traceShape(ctx, shape, x, y, radius + 3.5)
+        ctx.strokeStyle = withAlpha(categoryColor, 0.5)
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+
+      // Node body
+      traceShape(ctx, shape, x, y, radius)
+      if (drawHollow) {
+        ctx.fillStyle = withAlpha(colors.bg, 0.85)
+        ctx.fill()
+        ctx.setLineDash([2.5, 2])
+        ctx.strokeStyle = withAlpha(categoryColor, 0.85)
+        ctx.lineWidth = 1.2
+        ctx.stroke()
+        ctx.setLineDash([])
+      } else {
+        ctx.fillStyle = fillColor
+        ctx.fill()
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = strokeWidth
+        ctx.stroke()
+      }
 
       // Reset alpha
       ctx.globalAlpha = 1
@@ -501,7 +758,7 @@ export function KnowledgeGraphView({
         }
       }
     },
-    [colors, getNodeState, getEffectiveRadius, shouldShowLabel, getLabelOpacity]
+    [colors, getNodeState, getEffectiveRadius, shouldShowLabel, getLabelOpacity, maxDegree]
   )
 
   // Link rendering
@@ -515,21 +772,23 @@ export function KnowledgeGraphView({
       const linkOpacity =
         zoom < EDGE_FADE_START ? 0 : zoom < EDGE_FADE_END ? (zoom - EDGE_FADE_START) / (EDGE_FADE_END - EDGE_FADE_START) : 1
 
-      let strokeColor = withAlpha(colors.accent, 0.2 * linkOpacity)
-      let lineWidth = 0.5
+      // Neutral edges by default; the focused node's edges glow amber so the
+      // active path pops against the cool categorical nodes.
+      let strokeColor = withAlpha(colors.edge, 0.35 * linkOpacity)
+      let lineWidth = 0.6
 
       switch (state) {
         case "highlighted":
-          strokeColor = withAlpha(colors.accentSecondary, 0.6 * linkOpacity)
-          lineWidth = 1.2
+          strokeColor = withAlpha(HIGHLIGHT_EDGE, 0.85 * linkOpacity)
+          lineWidth = 1.6
           break
         case "dimmed":
-          strokeColor = withAlpha(colors.accent, 0.08 * linkOpacity)
-          lineWidth = 0.3
+          strokeColor = withAlpha(colors.edge, 0.1 * linkOpacity)
+          lineWidth = 0.4
           break
         default:
-          strokeColor = withAlpha(colors.accent, 0.18 * linkOpacity)
-          lineWidth = 0.5
+          strokeColor = withAlpha(colors.edge, 0.32 * linkOpacity)
+          lineWidth = 0.6
       }
 
       ctx.beginPath()
@@ -561,7 +820,8 @@ export function KnowledgeGraphView({
     (node: any) => {
       const fgNode = node as FGNode
       const connections = fgNode.degree
-      return `${fgNode.label} (${connections} connection${connections !== 1 ? "s" : ""})`
+      const type = CATEGORY_LABELS[fgNode.category]
+      return `${fgNode.label} · ${type} · ${connections} connection${connections !== 1 ? "s" : ""}`
     },
     []
   )
@@ -591,15 +851,41 @@ export function KnowledgeGraphView({
     return () => observer.disconnect()
   }, [])
 
-  // Center graph on mount / data change
+  // Constrain the force layout.
+  //
+  // BUG FIX: with d3's default forces the repulsion between nodes is unbounded
+  // and there is no meaningful pull back toward the origin. Dragging a node
+  // reheats the simulation, and on reheat the whole cloud expanded outward
+  // until nodes drifted outside the viewport. Capping charge distance and
+  // adding a centering pull keeps the layout's overall extent stable across
+  // reheats, so a drag moves what you grabbed instead of blowing the graph up.
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg?.d3Force) return
+
+    fg.d3Force("charge")?.strength(-120).distanceMax(360)
+    fg.d3Force("link")?.distance(58).strength(0.6)
+
+    // d3-force v3 exposes strength() on the centering force.
+    const center = fg.d3Force("center")
+    if (typeof center?.strength === "function") center.strength(0.06)
+  }, [fgData])
+
+  // Identity of the node set — changes only when notes are actually added or
+  // removed, not on every re-render.
+  const nodeSignature = useMemo(
+    () => fgData.nodes.map((n) => n.id).join(" "),
+    [fgData]
+  )
+
+  // Fit the graph when the node set changes. Skipped while dragging so the
+  // camera never moves out from under the pointer.
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (fgRef.current) {
-        fgRef.current.zoomToFit(400, 60)
-      }
+      if (!isDraggingRef.current) fitToView()
     }, 500)
     return () => clearTimeout(timer)
-  }, [fgData])
+  }, [nodeSignature, fitToView])
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -689,15 +975,35 @@ export function KnowledgeGraphView({
           <span>Editor</span>
         </button>
         <span className="graph-view-title">Knowledge Graph</span>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div className="graph-view-actions">
+          <button
+            className="graph-view-back"
+            onClick={fitToView}
+            title="Fit all notes in view"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
+            </svg>
+            <span>Fit</span>
+          </button>
+          <button
+            className="graph-view-back"
+            onClick={relayout}
+            title="Unpin every node and re-run the layout"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            <span>Relayout</span>
+          </button>
           {focusMode && (
             <button
               className="graph-view-back"
               onClick={exitFocusMode}
               title="Exit focus mode (show full graph)"
-              style={{ fontSize: "11px" }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.35-4.35" />
                 <path d="M8 11h6" />
@@ -728,20 +1034,67 @@ export function KnowledgeGraphView({
           // Interactions
           onNodeHover={handleNodeHover}
           onNodeClick={handleNodeClick}
+          onNodeDrag={handleNodeDrag}
+          onNodeDragEnd={handleNodeDragEnd}
           onBackgroundClick={handleBackgroundClick}
           onZoom={handleZoom}
           // Layout
           backgroundColor={colors.bg}
-          // Physics tuning
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          warmupTicks={50}
-          cooldownTicks={200}
+          // Physics tuning. Higher velocity decay (more friction) keeps a drag
+          // reheat from flinging the rest of the graph outward; see the force
+          // configuration effect above for the charge/centering constraints.
+          d3AlphaDecay={0.028}
+          d3VelocityDecay={0.42}
+          warmupTicks={prefersReducedMotion() ? 120 : 50}
+          cooldownTicks={prefersReducedMotion() ? 0 : 200}
           // Enable zoom/pan
           enableZoomInteraction={true}
           enablePanInteraction={true}
           enableNodeDrag={true}
         />
+
+        {/* Legend — explains node shape + color (file type), size (connections),
+            and the hollow/ring structural markers. Color is never the sole
+            signal: shape and a text label carry the same information. */}
+        {presentCategories.length > 0 && (
+          <div className={`graph-legend ${showLegend ? "" : "graph-legend-collapsed"}`}>
+            <button
+              className="graph-legend-toggle"
+              onClick={() => setShowLegend((v) => !v)}
+              title={showLegend ? "Hide legend" : "Show legend"}
+              aria-expanded={showLegend}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8h.01M11 12h1v4h1" />
+              </svg>
+              <span>Legend</span>
+            </button>
+            {showLegend && (
+              <div className="graph-legend-body">
+                <ul className="graph-legend-list">
+                  {presentCategories.map((cat) => (
+                    <li key={cat} className="graph-legend-item">
+                      <LegendGlyph shape={CATEGORY_SHAPES[cat]} color={CATEGORY_COLORS[cat]} />
+                      <span>{CATEGORY_LABELS[cat]}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="graph-legend-hint">
+                  <span className="graph-legend-sizes" aria-hidden="true">
+                    <span className="graph-legend-dot graph-legend-dot-sm" />
+                    <span className="graph-legend-dot graph-legend-dot-lg" />
+                  </span>
+                  <span>Size = connections</span>
+                </div>
+                <div className="graph-legend-hint">
+                  <LegendGlyph shape="circle" color={colors.textSubtle} hollow />
+                  <span>Dashed = unlinked</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
