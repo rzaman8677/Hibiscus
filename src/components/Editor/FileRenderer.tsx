@@ -19,10 +19,13 @@
  * ============================================================================
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { Document, Page, pdfjs } from 'react-pdf'
 import mammoth from 'mammoth'
 import { loadBinaryFile } from '../../utils/fileLoader'
+import './FileRenderer.css'
 
 // Import react-pdf required styles
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -71,6 +74,79 @@ interface FileRendererProps {
   content: string
   children: React.ReactNode
   markdownViewMode?: "live-preview" | "source"
+  /** Opens a file in the editor — used to jump to a freshly extracted note. */
+  onOpenFile?: (path: string) => void
+}
+
+/**
+ * Toolbar shown above read-only document viewers (PDF / DOCX).
+ *
+ * Two jobs: state plainly that the document cannot be edited in place (it is
+ * otherwise indistinguishable from an editable file, and users reasonably
+ * expect Ctrl+S to work), and offer the supported alternative — extract the
+ * text into a Markdown note that *is* editable and gets indexed.
+ */
+function DocumentToolbar({
+  file,
+  kind,
+  onOpenFile,
+}: {
+  file: { path: string }
+  kind: 'PDF' | 'Word document'
+  onOpenFile?: (path: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const extract = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const notePath = await invoke<string>('extract_document_to_note', {
+        sourcePath: file.path,
+      })
+      const name = notePath.split(/[/\\]/).pop() || notePath
+      setMessage(`Created ${name}`)
+      onOpenFile?.(notePath)
+    } catch (err) {
+      console.error('[Hibiscus] Extraction failed:', err)
+      setMessage(typeof err === 'string' ? err : 'Could not extract text')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="doc-toolbar">
+      <span className="doc-toolbar-badge" title={`${kind}s are opened read-only`}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        <span>Read-only</span>
+      </span>
+
+      <span className="doc-toolbar-hint">
+        {kind}s can't be edited in place
+      </span>
+
+      {message && <span className="doc-toolbar-message">{message}</span>}
+
+      <button
+        className="doc-toolbar-action"
+        onClick={extract}
+        disabled={busy}
+        title="Extract the text into an editable Markdown note beside this file"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <path d="M12 18v-6M9 15l3 3 3-3" />
+        </svg>
+        <span>{busy ? 'Extracting…' : 'Extract to note'}</span>
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -81,6 +157,9 @@ interface FileRendererProps {
 function PdfViewer({ file }: { file: { path: string } }) {
   const [pdfData, setPdfData] = useState<{ data: Uint8Array } | null>(null)
   const [error, setError] = useState<string>('')
+  const [numPages, setNumPages] = useState(0)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -104,10 +183,44 @@ function PdfViewer({ file }: { file: { path: string } }) {
 
     // Reset state for new file
     setPdfData(null)
+    setNumPages(0)
     setError('')
     loadPdf()
 
     return () => { cancelled = true }
+  }, [file.path])
+
+  // Size pages to the actual container, not the window. The editor pane is
+  // resizable and can be split, so a window-derived width overflowed or
+  // under-filled it and never responded to panel drags.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width
+        if (width > 0) setContainerWidth(width)
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [pdfData])
+
+  // Reload when the file changes on disk (the watcher drives this).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    listen<string[]>('fs-changed', (event) => {
+      const changed = event.payload.some(
+        (p) => p.replace(/\\/g, '/') === file.path.replace(/\\/g, '/')
+      )
+      if (changed) {
+        loadBinaryFile(file.path)
+          .then((buf) => setPdfData({ data: new Uint8Array(buf) }))
+          .catch(() => { /* file may be mid-write; the next event will retry */ })
+      }
+    }).then((fn) => (unlisten = fn))
+    return () => { if (unlisten) unlisten() }
   }, [file.path])
 
   if (error) {
@@ -140,25 +253,40 @@ function PdfViewer({ file }: { file: { path: string } }) {
     )
   }
 
+  // Leave room for the scrollbar and a little breathing space around the page.
+  const pageWidth = containerWidth > 0 ? Math.max(240, containerWidth - 48) : undefined
+
   return (
-    <div style={{ 
-      height: '100%', 
-      overflow: 'auto',
-      display: 'flex',
-      justifyContent: 'center',
-      backgroundColor: 'var(--bg-primary)'
-    }}>
+    <div
+      ref={containerRef}
+      className="pdf-viewer"
+      style={{
+        height: '100%',
+        overflow: 'auto',
+        backgroundColor: 'var(--bg-primary)',
+      }}
+    >
       <Document
         file={pdfData}
+        onLoadSuccess={({ numPages: n }) => setNumPages(n)}
         loading={<div style={{ padding: '20px' }}>Loading PDF…</div>}
         error={<div style={{ padding: '20px', color: 'var(--error)' }}>Failed to load PDF</div>}
       >
-        <Page 
-          pageNumber={1} 
-          renderTextLayer={true}
-          renderAnnotationLayer={false}
-          width={Math.max(600, window.innerWidth * 0.6)}
-        />
+        {/* Render every page. Previously only page 1 was shown, so multi-page
+            documents appeared truncated with no way to reach the rest. */}
+        {Array.from({ length: numPages }, (_, i) => (
+          <div key={i + 1} className="pdf-page">
+            <Page
+              pageNumber={i + 1}
+              renderTextLayer={true}
+              renderAnnotationLayer={false}
+              width={pageWidth}
+            />
+            <div className="pdf-page-label">
+              Page {i + 1} of {numPages}
+            </div>
+          </div>
+        ))}
       </Document>
     </div>
   )
@@ -168,6 +296,56 @@ function PdfViewer({ file }: { file: { path: string } }) {
 // DOCX HTML Cache — persists across re-renders to avoid re-conversion
 // ---------------------------------------------------------------------------
 const docxCache = new Map<string, string>()
+
+// Tags mammoth legitimately emits. Anything outside this set is unwrapped.
+const DOCX_ALLOWED_TAGS = new Set([
+  'P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'SUP', 'SUB',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE',
+  'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH',
+  'A', 'IMG', 'SPAN', 'DIV', 'HR',
+])
+
+/**
+ * Sanitize mammoth's HTML before injecting it.
+ *
+ * The output is derived from a file the user opened, which is not the same as
+ * content the user authored — a hostile .docx can carry embedded markup. This
+ * strips scripting vectors (script/iframe/object, on* handlers, javascript:
+ * URLs) while keeping the document's structure intact. Done with DOMParser so
+ * no sanitizer dependency is needed.
+ */
+function sanitizeDocxHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+
+  const walk = (node: Element) => {
+    for (const child of Array.from(node.children)) {
+      walk(child)
+
+      if (!DOCX_ALLOWED_TAGS.has(child.tagName)) {
+        // Unwrap unknown elements rather than dropping their text.
+        child.replaceWith(...Array.from(child.childNodes))
+        continue
+      }
+
+      for (const attr of Array.from(child.attributes)) {
+        const name = attr.name.toLowerCase()
+        const value = attr.value.trim().toLowerCase()
+
+        const isUnsafeUrl =
+          (name === 'href' || name === 'src') &&
+          (value.startsWith('javascript:') || value.startsWith('data:text/html'))
+
+        if (name.startsWith('on') || isUnsafeUrl) {
+          child.removeAttribute(attr.name)
+        }
+      }
+    }
+  }
+
+  walk(doc.body)
+  return doc.body.innerHTML
+}
 
 /**
  * DOCX Viewer Component
@@ -182,50 +360,63 @@ function DocxViewer({ file }: { file: { path: string } }) {
   const [error, setError] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(true)
 
-  useEffect(() => {
-    let cancelled = false
+  const convertDocx = useCallback(async (opts?: { bypassCache?: boolean }) => {
+    try {
+      setLoading(true)
+      setError('')
 
-    const convertDocx = async () => {
-      try {
-        setLoading(true)
-        setError('')
-
-        // Check cache first — avoid re-converting on tab switch
+      // Check cache first — avoid re-converting on tab switch
+      if (!opts?.bypassCache) {
         const cached = docxCache.get(file.path)
         if (cached !== undefined) {
           setHtmlContent(cached)
           setLoading(false)
           return
         }
-
-        // Read binary via unified loader (returns real ArrayBuffer)
-        const arrayBuffer = await loadBinaryFile(file.path)
-        if (cancelled) return
-
-        // mammoth expects { arrayBuffer: ArrayBuffer }
-        const result = await mammoth.convertToHtml({ arrayBuffer })
-        if (cancelled) return
-
-        // Cache and display
-        docxCache.set(file.path, result.value)
-        setHtmlContent(result.value)
-        
-        if (result.messages.length > 0) {
-          console.warn('[Hibiscus] DOCX conversion warnings:', result.messages)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError('Failed to load DOCX file. The file may be corrupted.')
-          console.error('[Hibiscus] DOCX loading error:', err)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
       }
-    }
 
-    convertDocx()
-    return () => { cancelled = true }
+      // Read binary via unified loader (returns real ArrayBuffer)
+      const arrayBuffer = await loadBinaryFile(file.path)
+
+      // mammoth expects { arrayBuffer: ArrayBuffer }
+      const result = await mammoth.convertToHtml({ arrayBuffer })
+
+      // Cache and display (sanitized — see sanitizeDocxHtml)
+      const safeHtml = sanitizeDocxHtml(result.value)
+      docxCache.set(file.path, safeHtml)
+      setHtmlContent(safeHtml)
+
+      if (result.messages.length > 0) {
+        console.warn('[Hibiscus] DOCX conversion warnings:', result.messages)
+      }
+    } catch (err) {
+      setError('Failed to load DOCX file. The file may be corrupted.')
+      console.error('[Hibiscus] DOCX loading error:', err)
+    } finally {
+      setLoading(false)
+    }
   }, [file.path])
+
+  useEffect(() => {
+    convertDocx()
+  }, [convertDocx])
+
+  // Invalidate on external change. The cache previously had no invalidation at
+  // all, so editing a .docx in Word left the viewer showing stale content for
+  // the rest of the session.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    listen<string[]>('fs-changed', (event) => {
+      const changed = event.payload.some(
+        (p) => p.replace(/\\/g, '/') === file.path.replace(/\\/g, '/')
+      )
+      if (changed) {
+        docxCache.delete(file.path)
+        convertDocx({ bypassCache: true })
+      }
+    }).then((fn) => (unlisten = fn))
+    return () => { if (unlisten) unlisten() }
+  }, [file.path, convertDocx])
 
   if (loading) {
     return (
@@ -258,16 +449,12 @@ function DocxViewer({ file }: { file: { path: string } }) {
   }
 
   return (
-    <div 
-      style={{ 
-        padding: '20px', 
-        height: '100%', 
-        overflow: 'auto',
-        backgroundColor: 'var(--bg-primary)',
-        color: 'var(--text-primary)'
-      }}
-      dangerouslySetInnerHTML={{ __html: htmlContent }}
-    />
+    <div className="docx-viewer">
+      <div
+        className="docx-page"
+        dangerouslySetInnerHTML={{ __html: htmlContent }}
+      />
+    </div>
   )
 }
 
@@ -299,9 +486,9 @@ function PptxViewer() {
  * with inline live preview handled by MarkdownInlineDecorator
  * (managed in EditorView.tsx).
  */
-export function FileRenderer({ file, content: _content, children, markdownViewMode: _markdownViewMode = "live-preview" }: FileRendererProps) {
+export function FileRenderer({ file, content: _content, children, markdownViewMode: _markdownViewMode = "live-preview", onOpenFile }: FileRendererProps) {
   const fileType = getFileType(file.path)
-  
+
   // Is this an editable text file? (Not a binary/document format)
   const isEditable = !['pdf', 'docx', 'pptx'].includes(fileType)
 
@@ -336,9 +523,20 @@ export function FileRenderer({ file, content: _content, children, markdownViewMo
         </div>
       </div>
 
-      {/* Render non-editable viewers alongside the hidden editor */}
-      {fileType === 'pdf' && <PdfViewer file={file} />}
-      {fileType === 'docx' && <DocxViewer file={file} />}
+      {/* Render non-editable viewers alongside the hidden editor.
+          Each is wrapped so the read-only toolbar sits above the document. */}
+      {fileType === 'pdf' && (
+        <div className="doc-viewer-shell">
+          <DocumentToolbar file={file} kind="PDF" onOpenFile={onOpenFile} />
+          <PdfViewer file={file} />
+        </div>
+      )}
+      {fileType === 'docx' && (
+        <div className="doc-viewer-shell">
+          <DocumentToolbar file={file} kind="Word document" onOpenFile={onOpenFile} />
+          <DocxViewer file={file} />
+        </div>
+      )}
       {fileType === 'pptx' && <PptxViewer />}
     </>
   )
