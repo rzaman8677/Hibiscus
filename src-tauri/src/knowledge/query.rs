@@ -759,6 +759,93 @@ pub async fn get_knowledge_graph(
         .map_err(|e| format!("Get graph task failed: {}", e))?
 }
 
+/// Extract a document's text into an editable Markdown note beside it.
+///
+/// PDFs and DOCX files are opened read-only -- their bytes cannot be
+/// round-tripped from a text editor without corrupting them. This command gives
+/// the user the other half of that contract: the extracted content as a real
+/// Markdown note they can edit, link with `[[wiki-links]]`, and which the
+/// indexer then picks up like any other note.
+///
+/// Structure is preserved via the parsers' section headings (page numbers for
+/// PDFs, Word heading styles for DOCX), so the note is navigable rather than
+/// one undifferentiated wall of text.
+///
+/// # Returns
+/// The absolute path of the note that was written.
+#[tauri::command]
+pub async fn extract_document_to_note(source_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || extract_to_note_blocking(&source_path))
+        .await
+        .map_err(|e| format!("Extraction task failed: {}", e))?
+}
+
+fn extract_to_note_blocking(source_path: &str) -> Result<String, String> {
+    use std::path::Path;
+
+    let parser = crate::knowledge::parser::parser_for_path(source_path)
+        .ok_or_else(|| format!("No parser available for: {}", source_path))?;
+
+    let doc = parser
+        .parse(source_path)
+        .map_err(|e| format!("Could not extract text: {}", e))?;
+
+    let source = Path::new(source_path);
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document");
+    let parent = source.parent().ok_or_else(|| "Invalid source path".to_string())?;
+    let source_name = source
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(source_path);
+
+    // Build the note. Front matter records provenance so the extracted note can
+    // always be traced back to the document it came from.
+    let mut out = String::with_capacity(4096);
+    out.push_str("---\n");
+    out.push_str(&format!("source: \"{}\"\n", source_name.replace('"', "'")));
+    out.push_str("extracted-by: hibiscus\n");
+    out.push_str("---\n\n");
+    out.push_str(&format!("# {}\n\n", stem));
+
+    let mut last_heading: Option<String> = None;
+    for section in &doc.sections {
+        if section.content.trim().is_empty() {
+            continue;
+        }
+
+        // Consecutive chunks from the same PDF page share a heading; only emit
+        // it when it actually changes.
+        if section.heading != last_heading {
+            if let Some(heading) = &section.heading {
+                out.push_str(&format!("## {}\n\n", heading.trim()));
+            }
+            last_heading = section.heading.clone();
+        }
+
+        out.push_str(section.content.trim());
+        out.push_str("\n\n");
+    }
+
+    // Never clobber an existing note: pick the first free numbered variant.
+    let mut target = parent.join(format!("{} (extracted).md", stem));
+    let mut counter = 2;
+    while target.exists() {
+        target = parent.join(format!("{} (extracted {}).md", stem, counter));
+        counter += 1;
+        if counter > 999 {
+            return Err("Too many extracted copies of this document".to_string());
+        }
+    }
+
+    std::fs::write(&target, out)
+        .map_err(|e| format!("Failed to write note '{}': {}", target.display(), e))?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn get_backlinks(
     state: State<'_, Arc<KnowledgeState>>,
