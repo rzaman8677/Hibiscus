@@ -369,6 +369,73 @@ pub async fn read_file_binary(path: String) -> Result<Vec<u8>, HibiscusError> {
     Ok(content)
 }
 
+/// Reports whether a path exists and is a regular file.
+///
+/// Cheap existence probe used during session restore for binary documents,
+/// where actually reading the file just to find out it is gone would mean
+/// pulling an entire PDF into memory.
+#[tauri::command]
+pub async fn file_exists(path: String) -> Result<bool, HibiscusError> {
+    let path = PathBuf::from(&path);
+    validate_path(&path)?;
+    Ok(path.is_file())
+}
+
+/// Copies a file byte-for-byte to a new location.
+///
+/// Used for "Save As" on binary documents (PDF, DOCX, images). Those files are
+/// opened read-only in the editor, so there is no text buffer to write --
+/// round-tripping them through `write_text_file` would corrupt the output.
+///
+/// # Arguments
+/// * `source` - Absolute path of the file to copy
+/// * `destination` - Absolute path to write the copy to
+///
+/// # Security
+/// Both paths are validated to prevent directory traversal attacks.
+#[tauri::command]
+pub async fn copy_file(source: String, destination: String) -> Result<(), HibiscusError> {
+    let source = PathBuf::from(&source);
+    let destination = PathBuf::from(&destination);
+
+    validate_path(&source)?;
+    validate_path(&destination)?;
+
+    if !source.exists() {
+        return Err(HibiscusError::FileNotFound(source.to_string_lossy().into()));
+    }
+
+    if !source.is_file() {
+        return Err(HibiscusError::InvalidPathType {
+            path: source.to_string_lossy().into(),
+            expected: "file".into(),
+            actual: "directory".into(),
+        });
+    }
+
+    // Create parent directories if needed.
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).await.map_err(|e| {
+            HibiscusError::Io(format!(
+                "Failed to create parent directories for '{}': {}",
+                destination.display(),
+                e
+            ))
+        })?;
+    }
+
+    fs::copy(&source, &destination).await.map_err(|e| {
+        HibiscusError::Io(format!(
+            "Failed to copy '{}' to '{}': {}",
+            source.display(),
+            destination.display(),
+            e
+        ))
+    })?;
+
+    Ok(())
+}
+
 /// Moves or renames a file or directory.
 ///
 /// # Arguments
