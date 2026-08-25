@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
-interface ShortcutHandlers {
+export interface ShortcutHandlers {
     onSave?: () => void;
     onSaveAll?: () => void;
     onOpenFolder?: () => void;
@@ -16,6 +16,9 @@ interface ShortcutHandlers {
 }
 
 export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
+    const handlersRef = useRef(handlers);
+    handlersRef.current = handlers;
+
     useEffect(() => {
         let focusModeChordActive = false;
         
@@ -28,28 +31,28 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
 
             if (isCtrl && !e.shiftKey && e.key.toLowerCase() === 'o') {
                 e.preventDefault();
-                handlers.onOpenFolder?.();
+                handlersRef.current.onOpenFolder?.();
             }
 
             if (isCtrl && !e.shiftKey && e.key.toLowerCase() === 'b') {
                 e.preventDefault();
-                handlers.onToggleLeftPanel?.();
+                handlersRef.current.onToggleLeftPanel?.();
             }
 
             if (isCtrl && !e.shiftKey && e.key.toLowerCase() === 'j') {
                 e.preventDefault();
-                handlers.onToggleRightPanel?.();
+                handlersRef.current.onToggleRightPanel?.();
             }
 
             if (isCtrl && (e.key === '?' || e.key === '/')) {
                 e.preventDefault();
-                handlers.onToggleShortcutOverlay?.();
+                handlersRef.current.onToggleShortcutOverlay?.();
             }
 
             // Ctrl+Alt+P -> Pomodoro
             if (isCtrl && e.altKey && e.key.toLowerCase() === 'p') {
                 e.preventDefault();
-                handlers.onOpenPomodoro?.();
+                handlersRef.current.onOpenPomodoro?.();
             }
 
             // Ctrl+F -> Start focus mode chord
@@ -63,7 +66,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
             if (focusModeChordActive && e.key.toLowerCase() === 'm') {
                 e.preventDefault();
                 focusModeChordActive = false;
-                handlers.onToggleFocusMode?.();
+                handlersRef.current.onToggleFocusMode?.();
                 return;
             }
 
@@ -75,25 +78,25 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
             // Ctrl+Shift+F -> Open Search
             if (isCtrl && e.shiftKey && e.key.toLowerCase() === 'f') {
                 e.preventDefault();
-                handlers.onOpenSearch?.();
+                handlersRef.current.onOpenSearch?.();
             }
 
             // Ctrl+, -> Settings
             if (isCtrl && !e.shiftKey && e.key === ',') {
                 e.preventDefault();
-                handlers.onOpenSettings?.();
+                handlersRef.current.onOpenSettings?.();
             }
 
             // Ctrl+M -> Toggle Markdown Preview
             if (isCtrl && !e.shiftKey && e.key.toLowerCase() === 'm') {
                 e.preventDefault();
-                handlers.onToggleMarkdownPreview?.();
+                handlersRef.current.onToggleMarkdownPreview?.();
             }
 
             // Ctrl+G -> Toggle Knowledge Graph view
             if (isCtrl && !e.shiftKey && e.key.toLowerCase() === 'g') {
                 e.preventDefault();
-                handlers.onToggleGraphView?.();
+                handlersRef.current.onToggleGraphView?.();
             }
         };
 
@@ -101,5 +104,5 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
         // or other child components can swallow them and stop propagation.
         window.addEventListener('keydown', handleKeyDown, true);
         return () => window.removeEventListener('keydown', handleKeyDown, true);
-    }, [handlers]);
+    }, []);
 }

@@ -10,11 +10,12 @@ interface AppLayoutState {
   centerView: CenterView
   cursorPosition: CursorPosition
   setShowRightPanel: Dispatch<SetStateAction<boolean>>
-  setShowShortcutOverlay: Dispatch<SetStateAction<boolean>>
   setCenterView: Dispatch<SetStateAction<CenterView>>
   setCursorPosition: Dispatch<SetStateAction<CursorPosition>>
   toggleLeftPanel: () => void
   toggleRightPanel: () => void
+  toggleShortcutOverlay: () => void
+  closeShortcutOverlay: () => void
   toggleGraphView: () => void
 }
 
@@ -36,6 +37,14 @@ export function useAppLayout(): AppLayoutState {
     setShowRightPanel((visible) => !visible)
   }, [])
 
+  const toggleShortcutOverlay = useCallback(() => {
+    setShowShortcutOverlay((visible) => !visible)
+  }, [])
+
+  const closeShortcutOverlay = useCallback(() => {
+    setShowShortcutOverlay(false)
+  }, [])
+
   const toggleGraphView = useCallback(() => {
     setCenterView((view) => (view === "editor" ? "graph" : "editor"))
   }, [])
@@ -47,11 +56,12 @@ export function useAppLayout(): AppLayoutState {
     centerView,
     cursorPosition,
     setShowRightPanel,
-    setShowShortcutOverlay,
     setCenterView,
     setCursorPosition,
     toggleLeftPanel,
     toggleRightPanel,
+    toggleShortcutOverlay,
+    closeShortcutOverlay,
     toggleGraphView,
   }
 }

@@ -35,16 +35,24 @@ describe("useAppLayout", () => {
     expect(result.current.centerView).toBe("editor")
   })
 
-  it("allows orchestration events to update overlay, view, and cursor state", () => {
+  it("toggles and closes the shortcut overlay", () => {
+    const { result } = renderHook(() => useAppLayout())
+
+    act(() => result.current.toggleShortcutOverlay())
+    expect(result.current.showShortcutOverlay).toBe(true)
+
+    act(() => result.current.closeShortcutOverlay())
+    expect(result.current.showShortcutOverlay).toBe(false)
+  })
+
+  it("allows orchestration events to update view and cursor state", () => {
     const { result } = renderHook(() => useAppLayout())
 
     act(() => {
-      result.current.setShowShortcutOverlay(true)
       result.current.setCenterView("graph")
       result.current.setCursorPosition({ line: 12, column: 4 })
     })
 
-    expect(result.current.showShortcutOverlay).toBe(true)
     expect(result.current.centerView).toBe("graph")
     expect(result.current.cursorPosition).toEqual({ line: 12, column: 4 })
   })
