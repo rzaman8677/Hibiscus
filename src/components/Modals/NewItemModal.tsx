@@ -19,11 +19,11 @@
 // ============================================================================
 
 import { useEffect, useRef, useCallback } from "react"
-import { useNewItemController } from "../../features/newitem"
+import { useNewItemController, type NewItemMode } from "../../features/newitem"
 import { Node } from "../../types/workspace"
 import "./NewItemModal.css"
 
-export type NewItemModalMode = "file" | "folder"
+export type NewItemModalMode = NewItemMode
 
 export interface NewItemModalProps {
   /** Whether the modal is currently visible. */

@@ -8,6 +8,8 @@
 
 import { Node } from "../../types/workspace"
 
+export type NewItemMode = "file" | "folder"
+
 // ---------------------------------------------------------------------------
 // Parsed path (output of the input engine)
 // ---------------------------------------------------------------------------
@@ -58,7 +60,7 @@ export interface NewItemState {
   suggestions: Suggestion[]
   selectedIndex: number
   validation: ValidationResult
-  mode: "file" | "folder"
+  mode: NewItemMode
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ export interface CreateItemRequest {
   /** Absolute path of the item to create. */
   path: string
   /** Whether this is a file or folder. */
-  type: "file" | "folder"
+  type: NewItemMode
   /** If true, the file should be opened in the editor after creation. */
   openAfterCreate: boolean
 }

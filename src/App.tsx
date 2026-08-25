@@ -23,22 +23,18 @@
  * ============================================================================
  */
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback } from "react"
 import { SplashScreen } from "./components/SplashScreen/SplashScreen"
 import { Workbench } from "./layout/workbench"
 import { ShortcutOverlay } from "./components/StatusBar/ShortcutOverlay"
 import { ThemeEditor } from "./components/ThemeEditor/ThemeEditor"
 import { ThemeProvider } from "./state/ThemeContext"
-import { NewItemModal, NewItemModalMode } from "./components/Modals/NewItemModal"
+import { NewItemModal } from "./components/Modals/NewItemModal"
 
 // Study tools imports
 import { StudyProvider, useStudy } from "./features/shared/StudyContext"
 import { SettingsModal } from "./features/settings/SettingsModal"
-import { useSettings } from "./features/settings/useSettings"
-import { usePomodoro } from "./features/pomodoro/usePomodoro"
-import { useFlashcards } from "./features/flashcards/useFlashcards"
-import { useNotesSynthesis } from "./features/notes/useNotesSynthesis"
-import { useStudyStats } from "./features/stats/useStudyStats"
+import { useStudyTools } from "./features/study/useStudyTools"
 
 import { useWorkspaceController } from "./hooks/useWorkspaceController"
 import { useEditorController } from "./hooks/useEditorController"
@@ -52,10 +48,9 @@ export const APP_VERSION = versionInfo.version;
 
 import "./App.css"
 
-// Knowledge system
-import { useKnowledgeIndex } from "./features/knowledge/useKnowledgeIndex"
-import { buildGraph } from "./features/knowledge/buildGraph"
-import { useBackendKnowledge } from "./features/knowledge/useBackendKnowledge"
+import { useMarkdownViewMode } from "./features/editor/useMarkdownViewMode"
+import { useKnowledgeGraphData } from "./features/knowledge/useKnowledgeGraphData"
+import { useNewItemModal } from "./features/newitem"
 
 // Layout Panes
 import { TopPane } from "./layout/panes/TopPane"
@@ -76,18 +71,6 @@ interface AppInnerProps {
  * to be mounted above it in the tree.
  */
 function AppInner({ workspaceController }: AppInnerProps) {
-  // ============================================================================
-  // MODAL STATE
-  // New file/folder creation modal
-  // ============================================================================
-  const [newItemModal, setNewItemModal] = useState<{
-    open: boolean
-    mode: NewItemModalMode
-  }>({
-    open: false,
-    mode: "file"
-  })
-
   const {
     showLeftPanel,
     showRightPanel,
@@ -143,34 +126,10 @@ function AppInner({ workspaceController }: AppInnerProps) {
     buffersRef,
   } = useEditorController(workspaceRoot)
 
-  // ============================================================================
-  // MARKDOWN VIEW MODE (per-file)
-  // Each .md file remembers its own mode: "live-preview" or "source".
-  // Non-markdown files are unaffected.
-  // NOTE: Must be declared AFTER useEditorController which defines activeFilePath.
-  // ============================================================================
-  const [markdownViewModes, setMarkdownViewModes] = useState<Record<string, "live-preview" | "source">>({})
-
-  /**
-   * Derive the current markdown view mode for the active file.
-   * Defaults to "live-preview" for .md files that haven't been toggled yet.
-   */
-  const activeMarkdownViewMode: "live-preview" | "source" =
-    activeFilePath && activeFilePath.toLowerCase().endsWith(".md")
-      ? (markdownViewModes[activeFilePath] ?? "live-preview")
-      : "source" // non-md files are always "source" (plain Monaco)
-
-  /**
-   * Toggle the markdown view mode for the currently active file.
-   * Only operates on .md files; silently ignored otherwise.
-   */
-  const toggleMarkdownViewMode = useCallback(() => {
-    if (!activeFilePath || !activeFilePath.toLowerCase().endsWith(".md")) return
-    setMarkdownViewModes((prev) => ({
-      ...prev,
-      [activeFilePath]: (prev[activeFilePath] ?? "live-preview") === "live-preview" ? "source" : "live-preview",
-    }))
-  }, [activeFilePath])
+  const {
+    activeMode: activeMarkdownViewMode,
+    toggleActiveMode: toggleMarkdownViewMode,
+  } = useMarkdownViewMode(activeFilePath)
 
   // ============================================================================
   // STUDY TOOLS STATE
@@ -181,75 +140,41 @@ function AppInner({ workspaceController }: AppInnerProps) {
     setFocusMode,
     toggleFocusMode,
     setActiveStudyPanel,
+    setRightPanelView,
     isSettingsOpen,
     setSettingsOpen,
   } = useStudy()
 
-  // Settings hook
-  const { settings, updateSettings, resetToDefaults } = useSettings(workspaceRoot)
-
-  // Study statistics hook
-  const studyStats = useStudyStats(workspaceRoot)
-
-  // Pomodoro hook (wired to focus mode + stats recording)
-  const [pomodoroState, pomodoroActions] = usePomodoro({
-    settings: settings.pomodoro,
-    onFocusMode: setFocusMode,
-    onSessionComplete: (durationSeconds) => {
-      studyStats.recordSession({
-        date: new Date().toISOString().split("T")[0],
-        startTime: new Date().toISOString(),
-        duration: durationSeconds,
-        type: "pomodoro",
-        completedFull: true,
-      })
-    },
-  })
-
-  // Flashcards hook
-  const flashcards = useFlashcards(workspaceRoot)
-
-  // Notes synthesis hook
-  const notes = useNotesSynthesis(workspaceRoot)
-
-  // ============================================================================
-  // KNOWLEDGE INDEX
-  // Tracks [[links]], #tags, and backlinks across workspace notes
-  // ============================================================================
   const {
+    settings,
+    updateSettings,
+    resetToDefaults,
+    pomodoroState,
+    pomodoroActions,
+    flashcards,
+    notes,
+    statsData,
+  } = useStudyTools(workspaceRoot, setFocusMode)
+
+  const {
+    graph: knowledgeGraph,
     index: knowledgeIndex,
     updateNote,
-    // Available for wiring to tree mutation events (file delete / rename)
-    deleteNote: _deleteNote,
-    renameNote: _renameNote,
-  } = useKnowledgeIndex(
-    workspace.tree,
-    buffersRef
-  )
-
-  // Frontend-only graph (regex-based, in-memory) — used purely as a fallback
-  // when the backend graph is unavailable (e.g. first index still building).
-  const fallbackGraph = useMemo(
-    () => buildGraph(knowledgeIndex),
-    [knowledgeIndex.version]
-  )
-
-  // Canonical knowledge graph + backlinks from the Rust backend (single source
-  // of truth: chunk-based, PDF/DOCX-aware, refreshes on filesystem changes).
-  const {
-    graph: backendGraph,
     backlinks: backendBacklinks,
     loading: knowledgeLoading,
     error: knowledgeError,
-  } = useBackendKnowledge(workspaceRoot)
-
-  // Prefer the backend graph; fall back to the frontend graph only when the
-  // backend has no nodes yet. Both center and right panels use this same value
-  // so they can never disagree.
-  const knowledgeGraph = useMemo(
-    () => (backendGraph && backendGraph.nodes.length > 0 ? backendGraph : fallbackGraph),
-    [backendGraph, fallbackGraph]
+  } = useKnowledgeGraphData(
+    workspaceRoot,
+    workspace.tree,
+    buffersRef,
   )
+
+  const {
+    modal: newItemModal,
+    openFileModal: handleNewFile,
+    openFolderModal: handleNewFolder,
+    closeModal: handleModalClose,
+  } = useNewItemModal(workspaceRoot)
 
   /**
    * Handle file open events from the tree view
@@ -298,36 +223,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
   }, [openFileByPath])
 
   /**
-   * Handle file menu actions
-   */
-  const handleNewFile = useCallback(() => {
-    if (!workspaceRoot) {
-      // TODO: Show proper notification instead of alert
-      console.warn("Please open a workspace first")
-      return
-    }
-    
-    setNewItemModal({ open: true, mode: "file" })
-  }, [workspaceRoot])
-
-  const handleNewFolder = useCallback(() => {
-    if (!workspaceRoot) {
-      // TODO: Show proper notification instead of alert
-      console.warn("Please open a workspace first")
-      return
-    }
-    
-    setNewItemModal({ open: true, mode: "folder" })
-  }, [workspaceRoot])
-
-  /**
-   * Handle modal close
-   */
-  const handleModalClose = useCallback(() => {
-    setNewItemModal({ open: false, mode: "file" })
-  }, [])
-
-  /**
    * Handle successful item creation from the modal.
    * If a file was created, open it in the editor.
    */
@@ -351,8 +246,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
   // interfere with each other (e.g., Ctrl+M calling preventDefault but not
   // triggering the handler if onToggleMarkdownPreview is missing).
   // ============================================================================
-  const { setRightPanelView } = useStudy()
-
   const handleOpenFile = useCallback(async () => {
     const filePath = await openFileDialog()
     if (filePath) {
@@ -414,18 +307,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
     onToggleMarkdownPreview: toggleMarkdownViewMode,
     onToggleGraphView: toggleGraphView,
   })
-
-  // ============================================================================
-  // STATS DATA (computed once for StatsPanel)
-  // ============================================================================
-  const statsData = {
-    totalStudyMinutes: studyStats.totalStudyMinutes,
-    totalSessions: studyStats.totalSessions,
-    currentStreak: studyStats.currentStreak,
-    avgDailyMinutes: studyStats.avgDailyMinutes,
-    weeklyData: studyStats.getDailyAggregates(7),
-    recentSessions: studyStats.data.sessions,
-  }
 
   return (
     <>
