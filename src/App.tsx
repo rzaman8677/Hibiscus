@@ -40,6 +40,7 @@ import { useWorkspaceController } from "./hooks/useWorkspaceController"
 import { useEditorController } from "./hooks/useEditorController"
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts"
 import { useAppLayout } from "./hooks/useAppLayout"
+import { useWorkspaceEditorRouting } from "./hooks/useWorkspaceEditorRouting"
 
 import versionInfo from "../version.json"
 
@@ -176,67 +177,31 @@ function AppInner({ workspaceController }: AppInnerProps) {
     closeModal: handleModalClose,
   } = useNewItemModal(workspaceRoot)
 
-  /**
-   * Handle file open events from the tree view
-   * Updates both workspace session (for persistence) and editor state
-   */
-  const handleFileOpen = (node: Parameters<typeof openNode>[0]) => {
-    openNode(node)
-    openFile(node)
-    // Reset cursor position when opening new file
-    setCursorPosition({ line: 1, column: 1 })
-  }
-
-  /**
-   * Handle editor content changes — forward to both buffer system
-   * and knowledge index for incremental link/tag parsing.
-   */
-  const handleEditorChange = useCallback(
-    (value: string) => {
-      onChange(value)
-      if (activeFilePath) {
-        updateNote(activeFilePath, value)
-      }
-    },
-    [onChange, activeFilePath, updateNote]
-  )
-
-  /**
-   * Open file by path string (for Calendar linked files)
-   */
-  const openFileByPath = useCallback((filePath: string, _line?: number) => {
-    const name = filePath.split(/[/\\]/).pop() || filePath
-    handleFileOpen({
-      id: filePath,
-      name,
-      path: filePath,
-      type: "file"
-    })
-  }, [handleFileOpen])
-
-  /**
-   * Open file from graph node click — switches to editor and opens file
-   */
-  const handleGraphNodeClick = useCallback((filePath: string) => {
-    setCenterView("editor")
-    openFileByPath(filePath)
-  }, [openFileByPath])
-
-  /**
-   * Handle successful item creation from the modal.
-   * If a file was created, open it in the editor.
-   */
-  const handleItemCreated = useCallback((absolutePath: string, isFile: boolean) => {
-    if (isFile) {
-      const name = absolutePath.split(/[/\\]/).pop() || absolutePath
-      handleFileOpen({
-        id: absolutePath,
-        name,
-        path: absolutePath,
-        type: "file"
-      })
-    }
-  }, [handleFileOpen])
+  const {
+    handleFileOpen,
+    openFileByPath,
+    handleGraphNodeClick,
+    handleEditorChange,
+    handleItemCreated,
+    handleOpenFile,
+    handleSaveAs,
+    handleCloseFile,
+    handleCloseFolder,
+    handleAppExit,
+  } = useWorkspaceEditorRouting({
+    activeFilePath,
+    openNode,
+    openFileDialog,
+    closeWorkspace,
+    openFile,
+    onChange,
+    saveAsFile,
+    closeFile,
+    handleEditorExit,
+    updateNote,
+    setCenterView,
+    setCursorPosition,
+  })
 
   // ============================================================================
   // KEYBOARD SHORTCUTS
@@ -246,40 +211,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
   // interfere with each other (e.g., Ctrl+M calling preventDefault but not
   // triggering the handler if onToggleMarkdownPreview is missing).
   // ============================================================================
-  const handleOpenFile = useCallback(async () => {
-    const filePath = await openFileDialog()
-    if (filePath) {
-      const name = filePath.split(/[/\\]/).pop() || filePath
-      handleFileOpen({
-        id: filePath,
-        name,
-        path: filePath,
-        type: "file"
-      })
-    }
-  }, [openFileDialog, handleFileOpen])
-
-  const handleSaveAs = useCallback(async () => {
-    await saveAsFile()
-  }, [saveAsFile])
-
-  const handleCloseFile = useCallback(async () => {
-    await closeFile()
-  }, [closeFile])
-
-  const handleCloseFolder = useCallback(() => {
-    closeWorkspace()
-  }, [closeWorkspace])
-
-  const handleAppExit = useCallback(async () => {
-    const shouldExit = await handleEditorExit()
-    if (shouldExit) {
-      // In a real app, this would close the application
-      // For now, we'll just close the workspace
-      closeWorkspace()
-    }
-  }, [handleEditorExit, closeWorkspace])
-
   /**
    * Open a study tool panel in the right sidebar.
    * Also ensures the right panel is visible.
