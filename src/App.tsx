@@ -64,12 +64,18 @@ import { MainPane } from "./layout/panes/MainPane"
 import { RightPane } from "./layout/panes/RightPane"
 import { BottomPane } from "./layout/panes/BottomPane"
 
+type WorkspaceController = ReturnType<typeof useWorkspaceController>
+
+interface AppInnerProps {
+  workspaceController: WorkspaceController
+}
+
 /**
  * Inner app component that has access to StudyContext.
  * This separation is needed because useStudy() requires StudyProvider
  * to be mounted above it in the tree.
  */
-function AppInner() {
+function AppInner({ workspaceController }: AppInnerProps) {
   // ============================================================================
   // MODAL STATE
   // New file/folder creation modal
@@ -95,7 +101,7 @@ function AppInner() {
     moveNode,
     recentFiles, // Provide this explicitly
     closeWorkspace,
-  } = useWorkspaceController()
+  } = workspaceController
 
   // ============================================================================
   // EDITOR STATE
@@ -593,7 +599,8 @@ function AppInner() {
  * Root App component — wraps AppInner with providers.
  */
 export default function App() {
-  const { workspaceRoot } = useWorkspaceController()
+  const workspaceController = useWorkspaceController()
+  const { workspaceRoot } = workspaceController
 
   // Cold-start gate — sessionStorage resets on process exit, so this
   // shows exactly once per OS-level launch, not on hot reloads.
@@ -618,7 +625,7 @@ export default function App() {
       )}
       <ThemeProvider workspaceRoot={workspaceRoot}>
         <StudyProvider>
-          <AppInner />
+          <AppInner workspaceController={workspaceController} />
         </StudyProvider>
       </ThemeProvider>
     </>

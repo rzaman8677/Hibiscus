@@ -3,6 +3,7 @@ import { act, render } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
+  useWorkspaceController: vi.fn(),
   workspace: {
     workspace: {
       tree: [],
@@ -49,7 +50,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock("../src/hooks/useWorkspaceController", () => ({
-  useWorkspaceController: () => mocks.workspace,
+  useWorkspaceController: mocks.useWorkspaceController,
 }))
 
 vi.mock("../src/hooks/useEditorController", () => ({
@@ -204,6 +205,7 @@ function callback<T extends (...args: never[]) => unknown>(
 describe("App orchestration", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.useWorkspaceController.mockReturnValue(mocks.workspace)
     sessionStorage.setItem("hibiscus_launched", "1")
     mocks.editor.activeFilePath = "/workspace/first.md"
     mocks.shortcutHandlers = undefined
@@ -212,6 +214,12 @@ describe("App orchestration", () => {
     mocks.leftPaneProps = undefined
     mocks.mainPaneProps = undefined
     mocks.modalProps = undefined
+  })
+
+  it("creates a single workspace controller for providers and orchestration", () => {
+    render(<App />)
+
+    expect(mocks.useWorkspaceController).toHaveBeenCalledTimes(1)
   })
 
   it("routes a file-open event to both workspace and editor controllers", () => {
