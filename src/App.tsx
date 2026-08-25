@@ -26,7 +26,6 @@
 import { useState, useCallback, useMemo } from "react"
 import { SplashScreen } from "./components/SplashScreen/SplashScreen"
 import { Workbench } from "./layout/workbench"
-import { CursorPosition } from "./components/Editor/EditorView"
 import { ShortcutOverlay } from "./components/StatusBar/ShortcutOverlay"
 import { ThemeEditor } from "./components/ThemeEditor/ThemeEditor"
 import { ThemeProvider } from "./state/ThemeContext"
@@ -44,6 +43,7 @@ import { useStudyStats } from "./features/stats/useStudyStats"
 import { useWorkspaceController } from "./hooks/useWorkspaceController"
 import { useEditorController } from "./hooks/useEditorController"
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts"
+import { useAppLayout } from "./hooks/useAppLayout"
 
 import versionInfo from "../version.json"
 
@@ -87,6 +87,21 @@ function AppInner({ workspaceController }: AppInnerProps) {
     open: false,
     mode: "file"
   })
+
+  const {
+    showLeftPanel,
+    showRightPanel,
+    showShortcutOverlay,
+    centerView,
+    cursorPosition,
+    setShowRightPanel,
+    setShowShortcutOverlay,
+    setCenterView,
+    setCursorPosition,
+    toggleLeftPanel,
+    toggleRightPanel,
+    toggleGraphView,
+  } = useAppLayout()
 
   // ============================================================================
   // WORKSPACE STATE
@@ -236,33 +251,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
     [backendGraph, fallbackGraph]
   )
 
-  // ============================================================================
-  // PANEL VISIBILITY STATE
-  // Controls which panels are visible in the layout
-  // ============================================================================
-  const [showLeftPanel, setShowLeftPanel] = useState(true)
-  const [showRightPanel, setShowRightPanel] = useState(false)
-  const [showShortcutOverlay, setShowShortcutOverlay] = useState(false)
-
-  // ============================================================================
-  // CENTER VIEW MODE
-  // Toggle between editor and knowledge graph in the center panel
-  // ============================================================================
-  const [centerView, setCenterView] = useState<"editor" | "graph">("editor")
-
-  const toggleGraphView = useCallback(() => {
-    setCenterView((prev) => (prev === "editor" ? "graph" : "editor"))
-  }, [])
-
-  // ============================================================================
-  // CURSOR POSITION STATE
-  // Tracks current line/column for status bar display
-  // ============================================================================
-  const [cursorPosition, setCursorPosition] = useState<CursorPosition>({
-    line: 1,
-    column: 1,
-  })
-
   /**
    * Handle file open events from the tree view
    * Updates both workspace session (for persistence) and editor state
@@ -287,20 +275,6 @@ function AppInner({ workspaceController }: AppInnerProps) {
     },
     [onChange, activeFilePath, updateNote]
   )
-
-  /**
-   * Toggle left panel (Explorer) visibility
-   */
-  const toggleLeftPanel = useCallback(() => {
-    setShowLeftPanel((prev) => !prev)
-  }, [])
-
-  /**
-   * Toggle right panel (Calendar/Study Tools) visibility
-   */
-  const toggleRightPanel = useCallback(() => {
-    setShowRightPanel((prev) => !prev)
-  }, [])
 
   /**
    * Open file by path string (for Calendar linked files)
